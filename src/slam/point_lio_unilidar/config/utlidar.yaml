@@ -1,8 +1,8 @@
 /**:
     ros__parameters:
-        use_sim_time: true
+        use_sim_time: false
 
-        use_imu_as_input: true
+        use_imu_as_input: false
         runtime_pos_log_enable: false
 
         filter_size_surf_min: 0.2
@@ -15,7 +15,7 @@
             con_frame_num: 1 # the number of frames combined
             cut_frame: false # true: if you need to cut one LiDAR frame into several subframes
             cut_frame_time_interval: 0.1 # should be integral fraction of 1 / LiDAR frequency   
-            time_lag_imu_to_lidar: 0.0 # Time offset between LiDAR and IMU calibrated by other algorithms, e.g., LI-Init (find in Readme)
+            time_lag_imu_to_lidar: 0.0 # 6 ms candidate did not improve held-out replay validation
                                         # the timesample of IMU is transferred from the current timeline to LiDAR's timeline by subtracting this value
 
         preprocess:
@@ -49,8 +49,9 @@
             gravity: [0.0, 0.0, 0.0] # [0.0, 9.810, 0.0] # gravity to be aligned
             gravity_init: [0.0, 0.0, 0.0] # [0.0, 9.810, 0.0] # # preknown gravity in the first IMU body frame, use when imu_en is false or start from a non-stationary state
             
-            # transform from imu to lidar
-            extrinsic_T: [ 0.007698, 0.014655, -0.00667] # ulhk # [-0.5, 1.4, 1.5] # utbm
+            # Factory LiDAR/IMU translation retained; body-frame translation
+            # estimate from this motion was not sufficiently constrained.
+            extrinsic_T: [0.007698, 0.014655, -0.00667]
             # extrinsic_R: [ -0.96551, 0, 0.26035,
             #                 0, 1, 0,
             #                 -0.26035, 0, -0.96551 ] # ulhk 4 utbm 3

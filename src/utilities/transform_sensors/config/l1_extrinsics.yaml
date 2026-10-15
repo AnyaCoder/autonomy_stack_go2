@@ -1,0 +1,46 @@
+schema_version: 1
+source_session: /home/anyacoder/autonomy_stack_go2/log/extrinsics_20261012_multiaxis_unlocked
+source_topics:
+  lidar: /utlidar/cloud
+  imu: /utlidar/imu
+cloud_rotation_to_body:
+- - 0.526113928842912
+  - -0.8101357987807455
+  - 0.25861964622077405
+- - -0.8386681557847847
+  - -0.5446427493963717
+  - 1.583804662266819e-06
+- - 0.14085403206874425
+  - -0.21689689500738352
+  - -0.9659792329994124
+gyro_rotation_to_body:
+- - 0.5277915158933942
+  - -0.8116508731335486
+  - 0.2503177498550616
+- - -0.8380407510319492
+  - -0.5456035528311495
+  - -0.0021125216764841387
+- - 0.1382888837208525
+  - -0.2086615040671742
+  - -0.9681614335221503
+raw_gyro_bias_rad_s:
+- 0.0025810827747976377
+- 0.00045908245945386545
+- 0.0002759726139613208
+firmware_lidar_origin_in_body_m:
+- 0.2821600283746739
+- 6.522526675885321e-09
+- -3.2522162740633576e-08
+pointlio_time_lag_imu_to_lidar_s: 0.006263170587303367
+lidar_pose_time_shift_interval_s:
+- -0.00018728131130592486
+- 0.012845569910619147
+accelerometer_extrinsics_validated: false
+translation_recalibrated: false
+notes:
+- Rotation matrices map raw incoming vectors to body axes.
+- Firmware body-frame translation is recorded as a reference; it is not applied to
+  clouds because local_planner already compensates sensor offset.
+- Physical LiDAR/IMU translation was not independently recalibrated; retain the repository
+  factory parameter.
+- Accelerometer convention is unresolved; gyro-only Point-LIO input remains in use.

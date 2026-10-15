@@ -63,6 +63,7 @@ double imu_meas_omg_cov;
 
 int lidar_type;
 int pcd_save_interval;
+std::string pcd_save_dir;
 
 std::vector<double> gravity_init;
 std::vector<double> gravity;
@@ -152,6 +153,7 @@ void readParameters(rclcpp::Node::SharedPtr node)
   declare_and_get_parameter<bool>(node, "runtime_pos_log_enable", runtime_pos_log, 0);
   declare_and_get_parameter<bool>(node, "pcd_save.pcd_save_en", pcd_save_en, false);
   declare_and_get_parameter<int>(node, "pcd_save.interval", pcd_save_interval, -1);
+  declare_and_get_parameter<std::string>(node, "pcd_save.output_dir", pcd_save_dir, "");
 
   // // Debug
   // std::cout << "use_imu_as_input: " << use_imu_as_input << std::endl;

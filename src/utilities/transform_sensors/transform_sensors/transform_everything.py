@@ -2,15 +2,16 @@
 import rclpy
 from rclpy.node import Node
 from rclpy.time import Time
+from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import Imu
-from sensor_msgs.msg import PointCloud2, PointField
+from sensor_msgs.msg import PointCloud2
 from geometry_msgs.msg import TransformStamped, Vector3
 import sensor_msgs_py.point_cloud2 as pc2
 import tf_transformations
 
 from transforms3d.quaternions import quat2mat
 
-from copy import deepcopy
+from collections import deque
 import numpy as np
 import yaml
 
@@ -19,22 +20,23 @@ import os
 class Repuber(Node):
     def __init__(self):
         super().__init__('sensor_transformer')
-        self.imu_sub = self.create_subscription(Imu, '/utlidar/imu', self.imu_callback, 50)
-        self.cloud_sub = self.create_subscription(PointCloud2, '/utlidar/cloud', self.cloud_callback, 50)
+        self.imu_sub = self.create_subscription(
+            Imu, '/utlidar/imu', self.imu_callback, qos_profile_sensor_data)
+        self.cloud_sub = self.create_subscription(
+            PointCloud2, '/utlidar/cloud', self.cloud_callback, qos_profile_sensor_data)
         
         self.imu_raw_pub = self.create_publisher(Imu, '/utlidar/transformed_raw_imu', 50)
         self.imu_pub = self.create_publisher(Imu, '/utlidar/transformed_imu', 50)
         self.cloud_pub = self.create_publisher(PointCloud2, '/utlidar/transformed_cloud', 50)
 
-        self.imu_stationary_list = []
-        
         self.time_stamp_offset = 0
         self.time_stamp_offset_set = False
+        self.pending_imu = deque(maxlen=256)
         
         self.cam_offset = 0.046825
 
         # Load calibration data
-        calib_data = calib_data = {
+        calib_data = {
                 'acc_bias_x': 0.0,
                 'acc_bias_y': 0.0,
                 'acc_bias_z': 0.0,
@@ -44,15 +46,13 @@ class Repuber(Node):
                 'ang_z2x_proj': 0.15,
                 'ang_z2y_proj': -0.28
             }
+        calib_file_path = os.path.join(os.path.expanduser('~'), 'Desktop/imu_calib_data.yaml')
         try:
-            home_path = os.path.expanduser('~')
-            calib_file_path = os.path.join(home_path, 'Desktop/imu_calib_data.yaml')
-            calib_file = open(calib_file_path, 'r')
-            calib_data = yaml.load(calib_file, Loader=yaml.FullLoader)
+            with open(calib_file_path) as calib_file:
+                calib_data = yaml.safe_load(calib_file)
             print("imu_calib.yaml loaded")
-            calib_file.close()
-        except:
-            print("imu_calib.yaml not found, using defualt values")
+        except FileNotFoundError:
+            print("imu_calib.yaml not found, using default values")
             
         self.acc_bias_x = calib_data['acc_bias_x']
         self.acc_bias_y = calib_data['acc_bias_y']
@@ -88,6 +88,33 @@ class Repuber(Node):
         self.body2imu_trans.transform.rotation.y = quat[1]
         self.body2imu_trans.transform.rotation.z = quat[2]
         self.body2imu_trans.transform.rotation.w = quat[3]
+
+        self.gyro_rotation = None
+        extrinsics_file = self.declare_parameter('extrinsics_file', '').value
+        if extrinsics_file:
+            with open(extrinsics_file) as calibration_file:
+                extrinsics = yaml.safe_load(calibration_file)
+            rotations = [np.asarray(extrinsics[key], dtype=float) for key in
+                         ('cloud_rotation_to_body', 'gyro_rotation_to_body')]
+            for rotation in rotations:
+                if rotation.shape != (3, 3) or not np.isfinite(rotation).all() or \
+                        not np.allclose(rotation.T @ rotation, np.eye(3), atol=1e-5) or \
+                        not np.isclose(np.linalg.det(rotation), 1.0, atol=1e-5):
+                    raise ValueError('Invalid sensor calibration rotation')
+            matrix = np.eye(4)
+            matrix[:3, :3] = rotations[0]
+            quat = tf_transformations.quaternion_from_matrix(matrix)
+            self.body2cloud_trans.transform.rotation.x = float(quat[0])
+            self.body2cloud_trans.transform.rotation.y = float(quat[1])
+            self.body2cloud_trans.transform.rotation.z = float(quat[2])
+            self.body2cloud_trans.transform.rotation.w = float(quat[3])
+            self.gyro_rotation = rotations[1]
+            self.raw_gyro_bias = np.asarray(extrinsics['raw_gyro_bias_rad_s'], dtype=float)
+            if self.raw_gyro_bias.shape != (3,) or not np.isfinite(self.raw_gyro_bias).all():
+                raise ValueError('Invalid gyro bias')
+            self.get_logger().info('Loaded calibrated L1 rotations: ' + extrinsics_file)
+            self.get_logger().info(
+                'Gyro rotation is calibrated; accelerometer extrinsics are unvalidated')
         
         self.x_filter_min = -0.7
         self.x_filter_max = -0.1
@@ -96,25 +123,17 @@ class Repuber(Node):
         self.z_filter_min = -0.6 - self.cam_offset
         self.z_filter_max = 0 - self.cam_offset
 
-        rclpy.spin(self)
                 
-    def is_in_filter_box(self, point):
-        # Check if the point is in the filter box
-        is_in_box = point[0] > self.x_filter_min and \
-                    point[0] < self.x_filter_max and \
-                    point[1] > self.y_filter_min and \
-                    point[1] < self.y_filter_max and \
-                    point[2] > self.z_filter_min and \
-                    point[2] < self.z_filter_max
-        return is_in_box
-
     def cloud_callback(self, data):
         if not self.time_stamp_offset_set:
             self.time_stamp_offset = self.get_clock().now().nanoseconds - Time.from_msg(data.header.stamp).nanoseconds
             self.time_stamp_offset_set = True
+            while self.pending_imu:
+                self.publish_calibrated_gyro_imu(self.pending_imu.popleft())
                 
-        cloud_arr = pc2.read_points_list(data)
-        points = np.array(cloud_arr)
+        points = np.asarray(pc2.read_points_list(data))
+        if not len(points):
+            return
 
         transform = self.body2cloud_trans.transform
         mat = quat2mat(np.array([transform.rotation.w, transform.rotation.x, transform.rotation.y, transform.rotation.z]))
@@ -123,18 +142,19 @@ class Repuber(Node):
         transformed_points = points
         transformed_points[:, 0:3] = points[:, 0:3] @ mat.T + translation
         transformed_points[:, 2] -= self.cam_offset
-        i = 0
-        remove_list = []
-        transformed_points = transformed_points.tolist()
-        for i in range(len(transformed_points)):
-            transformed_points[i][4] = int(transformed_points[i][4])
-            if self.is_in_filter_box(transformed_points[i]):
-                remove_list.append(i)
-
-        remove_list.sort(reverse=True)
-
-        for id_to_remove in remove_list:
-            del transformed_points[id_to_remove]
+        inside_filter_box = (
+            (transformed_points[:, 0] > self.x_filter_min) &
+            (transformed_points[:, 0] < self.x_filter_max) &
+            (transformed_points[:, 1] > self.y_filter_min) &
+            (transformed_points[:, 1] < self.y_filter_max) &
+            (transformed_points[:, 2] > self.z_filter_min) &
+            (transformed_points[:, 2] < self.z_filter_max))
+        transformed_points = transformed_points[~inside_filter_box].tolist()
+        ring_index = next((i for i, field in enumerate(data.fields)
+                           if field.name == 'ring'), None)
+        if ring_index is not None:
+            for point in transformed_points:
+                point[ring_index] = int(point[ring_index])
         
         elevated_cloud = pc2.create_cloud(data.header, data.fields, transformed_points)
         elevated_cloud.header.stamp = Time(nanoseconds=Time.from_msg(elevated_cloud.header.stamp).nanoseconds + self.time_stamp_offset).to_msg()
@@ -143,22 +163,45 @@ class Repuber(Node):
 
         self.cloud_pub.publish(elevated_cloud)
             
-    def transform_vector(self, vector, rotation):
-        # Transform a vector using a given quaternion rotation
-        q_vector = [vector.x, vector.y, vector.z, 0.0]
-        q_rotated = tf_transformations.quaternion_multiply(
-            tf_transformations.quaternion_multiply(rotation, q_vector),
-            tf_transformations.quaternion_conjugate(rotation)
-        )
-        
-        ret_vec = Vector3()
-        ret_vec.x = q_rotated[0]
-        ret_vec.y = q_rotated[1]
-        ret_vec.z = q_rotated[2]
-        return ret_vec
+    def publish_calibrated_gyro_imu(self, data):
+        gyro = self.gyro_rotation @ (np.array([
+            data.angular_velocity.x, data.angular_velocity.y,
+            data.angular_velocity.z]) - self.raw_gyro_bias)
+        acc_x = data.linear_acceleration.x
+        acc_y = -data.linear_acceleration.y
+        acc_z = -data.linear_acceleration.z
+        theta = 15.1 / 180 * np.pi
+        acceleration = np.array([
+            np.cos(theta) * acc_x - np.sin(theta) * acc_z - self.acc_bias_x,
+            acc_y - self.acc_bias_y,
+            np.sin(theta) * acc_x + np.cos(theta) * acc_z - self.acc_bias_z,
+        ])
+        transformed_imu = Imu()
+        transformed_imu.header.stamp = Time(nanoseconds=
+            Time.from_msg(data.header.stamp).nanoseconds + self.time_stamp_offset).to_msg()
+        transformed_imu.header.frame_id = 'body'
+        transformed_imu.angular_velocity.x = float(gyro[0])
+        transformed_imu.angular_velocity.y = float(gyro[1])
+        transformed_imu.angular_velocity.z = float(gyro[2])
+        transformed_imu.linear_acceleration.x = float(acceleration[0])
+        transformed_imu.linear_acceleration.y = float(acceleration[1])
+        transformed_imu.linear_acceleration.z = float(acceleration[2])
+        transformed_imu.orientation.w = 1.0
+        transformed_imu.orientation_covariance[0] = -1.0
+        self.imu_raw_pub.publish(transformed_imu)
+        transformed_imu.linear_acceleration.x = 0.0
+        transformed_imu.linear_acceleration.y = 0.0
+        transformed_imu.linear_acceleration.z = 0.0
+        self.imu_pub.publish(transformed_imu)
 
+    def imu_callback(self, data):
+        if self.gyro_rotation is not None:
+            if not self.time_stamp_offset_set:
+                self.pending_imu.append(data)
+                return
+            self.publish_calibrated_gyro_imu(data)
+            return
 
-    def imu_callback(self, data):    
         trans = np.zeros(3)
         trans[0] = self.body2imu_trans.transform.translation.x
         trans[1] = self.body2imu_trans.transform.translation.y
@@ -238,12 +281,17 @@ class Repuber(Node):
 def main(args=None):
     rclpy.init(args=args)
 
-    transform_node = Repuber()
-
-    rclpy.spin(transform_node)
-
-    Repuber.destroy_node()
-    rclpy.shutdown()
+    transform_node = None
+    try:
+        transform_node = Repuber()
+        rclpy.spin(transform_node)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        if transform_node is not None:
+            transform_node.destroy_node()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 if __name__ == '__main__':
     main()

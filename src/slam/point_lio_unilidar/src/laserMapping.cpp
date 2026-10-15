@@ -3,7 +3,12 @@
 #include <math.h>
 #include <thread>
 #include <fstream>
+#include <cerrno>
 #include <csignal>
+#include <cstdio>
+#include <ctime>
+#include <sstream>
+#include <sys/stat.h>
 #include <unistd.h>
 #include <Python.h>
 #include <so3_math.h>
@@ -667,6 +672,63 @@ void publish_init_kdtree(rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::Share
 
 PointCloudXYZI::Ptr pcl_wait_pub(new PointCloudXYZI(500000, 1));
 PointCloudXYZI::Ptr pcl_wait_save(new PointCloudXYZI());
+
+static std::string pcd_output_directory()
+{
+    static const std::string default_directory = [] {
+        std::time_t now = std::time(nullptr);
+        std::tm local_time{};
+        localtime_r(&now, &local_time);
+        char timestamp[32];
+        if (std::strftime(timestamp, sizeof(timestamp), "%Y%m%d-%H%M%S", &local_time) == 0)
+            std::snprintf(timestamp, sizeof(timestamp), "unknown-time");
+        return std::string(ROOT_DIR) + "../../../maps/office_" + timestamp + "-" +
+            std::to_string(getpid()) + "/";
+    }();
+    std::string directory = pcd_save_dir.empty() ? default_directory : pcd_save_dir;
+    if (directory.back() != '/')
+        directory += '/';
+    return directory;
+}
+
+static bool ensure_directory(const std::string &path)
+{
+    std::stringstream parts(path);
+    std::string part;
+    std::string current = path.front() == '/' ? "/" : "";
+    while (std::getline(parts, part, '/'))
+    {
+        if (part.empty())
+            continue;
+        if (!current.empty() && current.back() != '/')
+            current += '/';
+        current += part;
+        if (mkdir(current.c_str(), 0755) != 0 && errno != EEXIST)
+            return false;
+        struct stat info;
+        if (stat(current.c_str(), &info) != 0 || !S_ISDIR(info.st_mode))
+            return false;
+    }
+    return true;
+}
+
+static bool write_pcd_atomically(const std::string &path, const PointCloudXYZI &cloud)
+{
+    const std::string temporary_path = path + ".tmp";
+    pcl::PCDWriter writer;
+    if (writer.writeBinary(temporary_path, cloud) != 0)
+    {
+        std::remove(temporary_path.c_str());
+        return false;
+    }
+    if (std::rename(temporary_path.c_str(), path.c_str()) != 0)
+    {
+        std::remove(temporary_path.c_str());
+        return false;
+    }
+    return true;
+}
+
 void publish_frame_world(rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pubLaserCloudFullRes)
 {
     if (scan_pub_en)
@@ -716,12 +778,17 @@ void publish_frame_world(rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::Share
         if (pcl_wait_save->size() > 0 && pcd_save_interval > 0 && scan_wait_num >= pcd_save_interval)
         {
             pcd_index++;
-            string all_points_dir(string(string(ROOT_DIR) + "PCD/scans_") + to_string(pcd_index) + string(".pcd"));
-            pcl::PCDWriter pcd_writer;
-            cout << "current scan saved to /PCD/" << all_points_dir << endl;
-            pcd_writer.writeBinary(all_points_dir, *pcl_wait_save);
-            pcl_wait_save->clear();
-            scan_wait_num = 0;
+            string all_points_dir = pcd_output_directory() + "scans_" + to_string(pcd_index) + ".pcd";
+            cout << "Saving map chunk to: " << all_points_dir << endl;
+            if (write_pcd_atomically(all_points_dir, *pcl_wait_save))
+            {
+                pcl_wait_save->clear();
+                scan_wait_num = 0;
+            }
+            else
+            {
+                cerr << "Failed to save map chunk: " << all_points_dir << endl;
+            }
         }
     }
 }
@@ -834,6 +901,15 @@ int main(int argc, char **argv)
     readParameters(node);
     cout << "lidar_type: " << lidar_type << endl << flush;
 
+    if (pcd_save_en && !ensure_directory(pcd_output_directory()))
+    {
+        cerr << "Cannot create PCD output directory: " << pcd_output_directory() << endl;
+        rclcpp::shutdown();
+        return 1;
+    }
+    if (pcd_save_en)
+        cout << "PCD output directory: " << pcd_output_directory() << endl;
+
     path.header.stamp = get_ros_time(lidar_end_time);
     path.header.frame_id = "camera_init";
 
@@ -912,9 +988,11 @@ int main(int argc, char **argv)
 
     /*** ROS subscribe initialization ***/
     
-    auto sub_pcl = node->create_subscription<sensor_msgs::msg::PointCloud2>(lid_topic, 2000, standard_pcl_cbk);
+    auto sub_pcl = node->create_subscription<sensor_msgs::msg::PointCloud2>(
+        lid_topic, rclcpp::SensorDataQoS().keep_last(5), standard_pcl_cbk);
 
-    auto sub_imu = node->create_subscription<sensor_msgs::msg::Imu>(imu_topic, 2000, imu_cbk);
+    auto sub_imu = node->create_subscription<sensor_msgs::msg::Imu>(
+        imu_topic, rclcpp::SensorDataQoS().keep_last(100), imu_cbk);
 
     auto pubLaserCloudFullRes = node->create_publisher<sensor_msgs::msg::PointCloud2>("/cloud_registered", 1000);
 
@@ -1459,10 +1537,10 @@ int main(int argc, char **argv)
     if (pcl_wait_save->size() > 0 && pcd_save_en)
     {
         string file_name = string("scans.pcd");
-        string all_points_dir(string(string(ROOT_DIR) + "PCD/") + file_name);
+        string all_points_dir = pcd_output_directory() + file_name;
         std::cout << "Saving map to file: " << all_points_dir << std::endl;
-        pcl::PCDWriter pcd_writer;
-        pcd_writer.writeBinary(all_points_dir, *pcl_wait_save);
+        if (!write_pcd_atomically(all_points_dir, *pcl_wait_save))
+            std::cerr << "Failed to save map to file: " << all_points_dir << std::endl;
     }
     fout_out.close();
     fout_imu_pbp.close();

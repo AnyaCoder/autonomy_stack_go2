@@ -10,6 +10,7 @@ setup(
         ('share/ament_index/resource_index/packages',
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
+        ('share/' + package_name + '/config', ['config/l1_extrinsics.yaml']),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -20,7 +21,8 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'transform_everything = transform_sensors.transform_everything:main'
+            'transform_everything = transform_sensors.transform_everything:main',
+            'level_map = transform_sensors.level_map:main',
         ],
     },
 )
