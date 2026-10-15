@@ -12,6 +12,12 @@ log/*
 
 __pycache__
 
+*.py[cod]
+
+.~lock.*#
+
+*.rviz.bak-*
+
 *~
 
 .DS_Store

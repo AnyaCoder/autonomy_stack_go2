@@ -358,7 +358,7 @@ calibrate_imu() {
         echo "已备份旧标定: $backup"
     fi
     cd "$GO2_ROOT"
-    ros2 run calibrate_imu calibrate_imu || return $?
+    python3 "$GO2_ROOT/tools/ros_process_group.py" --replace ros2 run calibrate_imu calibrate_imu || return $?
     if [[ -s "$calib_file" ]]; then
         echo "标定文件已生成: $calib_file"
     else
@@ -368,16 +368,10 @@ calibrate_imu() {
 }
 
 slam() {
-    local existing launch_pid="" link_lost launch_status interrupted=0 check_interval map_dir map_root
+    local launch_pid="" link_lost launch_status interrupted=0 check_interval map_dir map_root
     select_go2_network || return 1
     source_robot_env || return 1
     reset_ros_cli_graph
-    existing="$(pgrep -af '[p]ointlio_mapping|[t]ransform_everything|[r]os2 launch point_lio_unilidar' || true)"
-    if [[ -n "$existing" ]]; then
-        printf '检测到已有 SLAM/传感器转换进程，避免产生重复话题发布者:\n%s\n' "$existing" >&2
-        echo '请先在原终端停止旧 SLAM；若 launch 已退出但转换节点残留，也需先结束该节点。' >&2
-        return 1
-    fi
     cd "$GO2_ROOT"
     check_interval=0.25
     [[ "$GO2_SELECTED_INTERFACE" == "$GO2_WIFI_INTERFACE" ]] && check_interval=1
@@ -389,7 +383,7 @@ slam() {
         map_dir="$(mktemp -d "$map_root/office_$(date +%Y%m%d-%H%M%S)-XXXXXX")"
         echo "本轮地图保存目录: $map_dir"
         echo "SLAM 监控已选链路 $GO2_SELECTED_INTERFACE；断线后将清理节点，并沿原链路恢复。"
-        ros2 launch point_lio_unilidar mapping_utlidar.launch rviz:=true "pcd_dir:=$map_dir" &
+        python3 "$GO2_ROOT/tools/ros_process_group.py" --replace ros2 launch point_lio_unilidar mapping_utlidar.launch rviz:=true "pcd_dir:=$map_dir" &
         launch_pid=$!
         link_lost=0
         while kill -0 "$launch_pid" 2>/dev/null; do
@@ -465,15 +459,10 @@ map_view() {
 }
 
 run_system() {
-    local existing answer
+    local answer
     select_go2_network || return 1
     source_robot_env || return 1
     reset_ros_cli_graph
-    existing="$(pgrep -af '[p]ointlio_mapping|[l]ocalPlanner|[s]ystem_real_robot.launch' || true)"
-    if [[ -n "$existing" ]]; then
-        printf '检测到已有实机/SLAM 进程，拒绝重复启动:\n%s\n' "$existing" >&2
-        return 1
-    fi
     printf '\n即将启动实机 local planner 和 RViz。请确认 Go2 站稳、场地安全且你准备好接管。\n'
     read -r -p '输入 RUN 启动，其他输入取消: ' answer
     [[ "$answer" == RUN ]] || { echo '已取消。'; return 1; }

@@ -7,6 +7,7 @@
   <arg name="vehicleX" default="0.0"/>
   <arg name="vehicleY" default="0.0"/>
   <arg name="checkTerrainConn" default="true"/>
+  <arg name="is_real_robot" default="true"/>
 
   <node pkg="joy" exec="joy_node" name="ps3_joy" output="screen" >
     <param name="dev" value="/dev/input/js0" />
@@ -20,6 +21,7 @@
 
   <include file="$(find-pkg-share point_lio_unilidar)/launch/mapping_utlidar.launch">
     <arg name="rviz" value="false"/>
+    <arg name="publish_odometry_without_downsample" value="false"/>
   </include>
 
   <include file="$(find-pkg-share local_planner)/launch/local_planner.launch" >
@@ -28,6 +30,7 @@
     <arg name="cameraOffsetZ" value="$(var cameraOffsetZ)"/>
     <arg name="goalX" value="$(var vehicleX)"/>
     <arg name="goalY" value="$(var vehicleY)"/>
+    <arg name="is_real_robot" value="$(var is_real_robot)"/>
   </include>
 
   <include file="$(find-pkg-share terrain_analysis)/launch/terrain_analysis.launch" />
