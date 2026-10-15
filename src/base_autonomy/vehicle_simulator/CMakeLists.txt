@@ -53,6 +53,10 @@ install(TARGETS
   sim_image_repub
   DESTINATION lib/${PROJECT_NAME})
 
+install(PROGRAMS
+  ${CMAKE_CURRENT_SOURCE_DIR}/../../../tools/go2_camera_bridge.py
+  DESTINATION lib/${PROJECT_NAME})
+
 install(
   DIRECTORY
   launch

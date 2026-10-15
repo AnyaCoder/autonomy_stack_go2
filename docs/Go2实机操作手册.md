@@ -108,7 +108,7 @@ GO2_FORCE_WIFI=1 ./go2.sh check
 
 NetworkManager 已保存 Go2-Explore 配置和密码。`go2.sh` 会把该配置设为静态本地地址，不会询问或输出密码；如果配置被删除，脚本会提示需要在 Ubuntu 网络设置中重新保存。单张 Wi-Fi 网卡连接 Go2 热点时会断开校园 Wi-Fi，热点不提供互联网。热点连接不会新增默认路由。默认情况下有线 Go2 可达时优先绑定有线网卡；设置 `GO2_FORCE_WIFI=1` 可在网线保持连接时强制让 Cyclone DDS 只绑定 Wi-Fi 网卡，适合验证无线话题链路。
 
-热点可达只证明 IP 网络通，不代表 ROS 2 DDS 已经通。无线模式下电脑使用 Domain 0、`ROS_LOCALHOST_ONLY=0`、组播及 CycloneDDS 静态发现 Peer `192.168.76.1`。Go2 上的无线 relay 将传感器话题从 `eth0` 转发到 `wlan0`，并将 `/api/sport/request` 从 `wlan0` 转回 `eth0`。`./go2.sh check` 会检查 Domain 0 的 L1 IMU、点云和机身状态发布者，并用 sensor-data QoS 实际订阅三者、确认收到样本。单独运行 `ros2 topic info` 看到 `Publisher count: 1` 只证明发现了发布端；`Subscription count: 0` 表示当时没有订阅节点，不能证明样本已收到。无线链路应以电脑实际收到样本为准，不能用 Go2 本机 relay 写入计数代替端到端验证。详细话题和检查方式见 [Go2 无线 DDS 转发需求](Go2无线DDS转发需求.md)。
+热点可达只证明 IP 网络通，不代表 ROS 2 DDS 已经通。无线模式下电脑使用 Domain 0、`ROS_LOCALHOST_ONLY=0`、组播及 CycloneDDS 静态发现 Peer `192.168.76.1`。Go2 上的无线 relay 将传感器话题从 `eth0` 转发到 `wlan0`；运动请求转发因 StopMove 回环故障暂停，无线模式暂不能控制狗运动。`./go2.sh check` 会检查 Domain 0 的 L1 IMU、点云和机身状态发布者，并用 sensor-data QoS 实际订阅三者、确认收到样本。单独运行 `ros2 topic info` 看到 `Publisher count: 1` 只证明发现了发布端；`Subscription count: 0` 表示当时没有订阅节点，不能证明样本已收到。无线链路应以电脑实际收到样本为准，不能用 Go2 本机 relay 写入计数代替端到端验证。详细话题和检查方式见 [Go2 无线 DDS 转发需求](Go2无线DDS转发需求.md)。
 
 若无线话题发现失败，保持电脑关联 Go2-Explore 后，强制走 Wi-Fi 运行检查并保存完整终端输出：
 
@@ -124,4 +124,4 @@ GO2_FORCE_WIFI=1 ./go2.sh check
 ./go2.sh run
 ```
 
-该命令会自动选链路、准备 ROS 环境并检查是否已有冲突进程，然后要求输入 `RUN` 才启动 `system_real_robot.sh`。它不预检传感器话题或 `/api/sport/request` 订阅者；无线模式需先完成请求话题的上行转发，控制命令才能到达 Go2。需要断开 Go2 热点时运行 `./go2.sh disconnect`；NetworkManager 中保存的连接不会被删除。
+该命令会自动选链路、准备 ROS 环境并要求输入 `RUN` 才启动实机系统。它不预检传感器话题或 `/api/sport/request` 订阅者；当前只能在有线模式下进行路径点运动控制。`run` 的 RViz 左侧展开 `RegScan`，修改 `Decay Time` 可调整注册点云在屏幕上的保留秒数；这只影响显示，不改变 SLAM 数据或传输延迟。同一窗口显示 Go2 前置相机、D435i 彩色图和深度图；狗端 `go2-front-camera.service` 与 `go2-realsense-preview.service` 需在运行。需要断开 Go2 热点时运行 `./go2.sh disconnect`；NetworkManager 中保存的连接不会被删除。

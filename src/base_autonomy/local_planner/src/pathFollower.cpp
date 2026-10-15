@@ -306,6 +306,7 @@ int main(int argc, char** argv)
 
   rclcpp::Rate rate(100);
   bool status = rclcpp::ok();
+  bool go2ControlActive = false;
   while (status) {
     rclcpp::spin_some(nh);
 
@@ -426,15 +427,26 @@ int main(int argc, char** argv)
 
         pubSkipCount = pubSkipNum;
 
-        if (is_real_robot)
-        {
-          if (cmd_vel.twist.linear.x == 0 && cmd_vel.twist.linear.y == 0 && cmd_vel.twist.angular.z == 0){
-          	sport_req.StopMove(req);
+        if (is_real_robot) {
+          const bool inputActive = autonomyMode ||
+              (joyTime > 0 && nh->now().seconds() - joyTime < 0.5 &&
+               (fabs(joyManualFwd) > 0.01 || fabs(joyManualLeft) > 0.01 ||
+                fabs(joyManualYaw) > 0.01 || fabs(joyYaw) > 0.01));
+          if (inputActive) {
+            if (cmd_vel.twist.linear.x == 0 && cmd_vel.twist.linear.y == 0 &&
+                cmd_vel.twist.angular.z == 0) {
+              sport_req.StopMove(req);
+            } else {
+              sport_req.Move(req, cmd_vel.twist.linear.x,
+                             cmd_vel.twist.linear.y, cmd_vel.twist.angular.z);
+            }
+            pubGo2Request->publish(req);
+            go2ControlActive = true;
+          } else if (go2ControlActive) {
+            sport_req.StopMove(req);
+            pubGo2Request->publish(req);
+            go2ControlActive = false;
           }
-          else{
-               sport_req.Move(req, cmd_vel.twist.linear.x, cmd_vel.twist.linear.y, cmd_vel.twist.angular.z);
-          }
-          pubGo2Request->publish(req);
         }
       }
     }

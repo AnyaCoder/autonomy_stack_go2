@@ -1,0 +1,17 @@
+[Unit]
+Description=Go2 read-only front camera server
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+Restart=always
+RestartSec=5
+TimeoutStopSec=15
+Environment=CYCLONEDDS_HOME=/home/unitree/go2/runtime/dds-0.10.2/install
+Environment=LD_LIBRARY_PATH=/home/unitree/go2/runtime/dds-0.10.2/install/lib
+Environment=PYTHONPATH=/home/unitree/go2/vendor/unitree_sdk2_python
+ExecStart=/home/unitree/go2/runtime/dds-0.10.2/venv/bin/python /home/unitree/go2/services/voxel_ws/scripts/front_camera_bridge.py robot --bind 0.0.0.0
+KillMode=control-group
+
+[Install]
+WantedBy=default.target

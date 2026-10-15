@@ -2,7 +2,7 @@
 	<!-- Launch file for Unitree L1 LiDAR mounted on Go2 -->
 	<arg name="rviz" default="true" />
 	<arg name="pcd_dir" default="" />
-	<arg name="publish_odometry_without_downsample" default="true" />
+	<arg name="publish_odometry_without_downsample" default="false" />
 
 	<node pkg="transform_sensors" exec="transform_everything" name="transform_everything" output="screen">
 		<param name="extrinsics_file" value="$(find-pkg-share transform_sensors)/config/l1_extrinsics.yaml" />

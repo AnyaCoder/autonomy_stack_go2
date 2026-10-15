@@ -1,0 +1,16 @@
+[Unit]
+Description=Go2 D435i color and depth preview for operator PC
+After=go2-realsense.service
+Requires=go2-realsense.service
+
+[Service]
+Type=simple
+Environment=ROS_DOMAIN_ID=76
+Environment=RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+Environment=FASTRTPS_DEFAULT_PROFILES_FILE=/home/unitree/go2/services/voxel_ws/config/camera_udp.xml
+ExecStart=/bin/bash -c 'source /opt/ros/foxy/setup.bash; exec /usr/bin/python3 /home/unitree/go2/relay/go2_camera_bridge.py serve-realsense'
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

@@ -40,7 +40,7 @@ GO2_FORCE_WIFI=1 ./go2.sh check
 
 最开始碰到的问题是：Go2 自己的 `eth0` 上能看到传感器 DDS 话题，直接从 `wlan0` 无线访问时却收不到。于是单独做了 `~/go2-wireless`，让狗端运行一个轻量 DDS 中继。
 
-中继程序 `native_wifi_relay.py` 在 `eth0` 收到 IMU、点云、机身状态等数据，再从 `wlan0` 按原来的话题名和类型发出去。Sport API 请求走反方向：中继从 `wlan0` 收到电脑发来的 `/api/sport/request`，再从 `eth0` 发给狗上的 Sport API。两条方向分开处理，请求不会被转回 Wi-Fi 形成回环。
+中继程序 `tools/native_wifi_relay.py` 在 `eth0` 收到 IMU、点云、机身状态等数据，再从 `wlan0` 按原来的话题名和类型发出去。旧版 Sport API 请求转发出现了 StopMove 自回环，导致大量请求和原厂遥控器卡顿；2026-10-15 起已关闭请求方向，等待来源过滤修复。当前无线只能看传感器、建图，不能用本中继进行运动控制。
 
 中继由 `go2-wifi-relay.service` 管理，开机后可以自动拉起，异常退出也会重启。`go2-fastdds-wifi.xml` 给狗端 DDS 配置 `eth0` 和 `wlan0` 两个接口。电脑端的 `ros-wifi-env.sh` 则把 ROS 2 Domain 设为 0、CycloneDDS 固定在无线网卡，并把 `192.168.76.1` 设成发现节点。
 
@@ -72,7 +72,7 @@ L1 的 IMU 校准是通过 ROS 2 节点完成的。开始前脚本会确认 `/ut
 ./go2.sh slam
 ```
 
-它先确认 IMU 和点云都收到实际样本，再启动传感器转换、Point-LIO 和 RViz。运行时可以查看点云、里程计和轨迹。`Ctrl+C` 退出。这个入口只跑 SLAM，不会同时启动局部规划或让狗自主走动。
+它会启动传感器转换、Point-LIO 和 RViz。运行时可以查看点云、里程计和轨迹；开始前可单独运行 `./go2.sh check` 确认 IMU 和点云样本。`Ctrl+C` 退出。这个入口只跑 SLAM，不会同时启动局部规划或让狗自主走动；再次启动时会先向旧 launch 发送 Ctrl+C，等待正常退出以完成地图尾块写入，超时后才强制结束残留节点。
 
 ## 外参和回放验证
 
@@ -90,10 +90,16 @@ L1 的 IMU 校准是通过 ROS 2 节点完成的。开始前脚本会确认 `/ut
 
 ## 相关文件
 
-- `go2.sh`：网络选择、通信检查、编译、IMU 校准、SLAM 和实机系统入口。
-- `unitree_setup.sh`：ROS 2 Foxy、CycloneDDS 网卡和无线 Peer 配置。
+- `go2.sh`：唯一实机命令入口；命令编排、链路选择、检查和 SLAM 进程管理。
+- `unitree_setup.sh`：ROS 2 Foxy 与 CycloneDDS 环境初始化；不要在其他入口重复拼 DDS 配置。
+- `src/slam/point_lio_unilidar/launch/mapping_utlidar.launch`：Point-LIO 节点与参数；`go2.sh slam` 负责生成并传入每轮独立的 `pcd_dir`。
+- `tools/map_results.py`、`tools/map_view.rviz`：地图批次列表、PCD 校验/合并和 RViz 发布；核心合并逻辑由 `tests/test_map_results.py` 覆盖。
+- `tools/capture_extrinsics.py`、`tools/estimate_extrinsics.py`、`tools/validate_extrinsics_replay.py`：外参采集、估计和离线回放验证，修改标定算法时按这条数据流检查。
+- `tools/go2-services.sh`：部署到 Go2 `~/go2/` 的用户服务管理命令；服务实现与配置由狗端 `~/go2/services/` 管理。
 - `docs/Go2实机操作手册.md`：按步骤操作的详细版本。
 - `docs/Go2无线DDS转发需求.md`：无线 DDS 的话题方向与验收方式。
 - `src/utilities/transform_sensors/config/l1_extrinsics.yaml`：当前 L1 旋转标定参数。
-- `src/slam/point_lio_unilidar/launch/mapping_utlidar.launch`：实机 Point-LIO 启动配置。
-- `~/go2-wireless/README.md`、`native_wifi_relay.py`：狗端中继的说明和实现。
+- `tools/native_wifi_relay.py`：狗端无线传感器中继的仓库源码；部署路径为 Go2 `~/go2/relay/native_wifi_relay.py`。
+- `tools/go2_camera_bridge.py`：D435i 快照服务与本机相机话题发布；狗端部署路径为 `~/go2/relay/go2_camera_bridge.py`。
+
+修改后可运行 `shellcheck go2.sh tools/go2-services.sh`、`bash -n go2.sh tools/go2-services.sh` 和 `python3 -m unittest discover -s tests -v` 做本机静态检查；这些检查不会连接 Go2。

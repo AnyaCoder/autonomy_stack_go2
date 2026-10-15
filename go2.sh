@@ -459,14 +459,31 @@ map_view() {
 }
 
 run_system() {
-    local answer
+    local answer launch_pid status=0 interrupted=0
     select_go2_network || return 1
     source_robot_env || return 1
     reset_ros_cli_graph
     printf '\n即将启动实机 local planner 和 RViz。请确认 Go2 站稳、场地安全且你准备好接管。\n'
     read -r -p '输入 RUN 启动，其他输入取消: ' answer
     [[ "$answer" == RUN ]] || { echo '已取消。'; return 1; }
-    exec "$GO2_ROOT/system_real_robot.sh"
+    python3 "$GO2_ROOT/tools/ros_process_group.py" --replace \
+        ros2 launch vehicle_simulator system_real_robot.launch &
+    launch_pid=$!
+    trap 'interrupted=1; kill -TERM "$launch_pid" 2>/dev/null || true' INT TERM
+    while kill -0 "$launch_pid" 2>/dev/null; do
+        if ! selected_link_up; then
+            echo "Go2 链路 $GO2_SELECTED_INTERFACE 已断开，停止实机系统。" >&2
+            kill -TERM "$launch_pid" 2>/dev/null || true
+            status=1
+            break
+        fi
+        (( interrupted )) && break
+        sleep 1 || true
+    done
+    wait "$launch_pid" || status=$?
+    trap - INT TERM
+    (( interrupted )) && return 130
+    return "$status"
 }
 
 disconnect_go2_wifi() {
