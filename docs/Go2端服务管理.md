@@ -24,4 +24,14 @@ Go2 的自定义运行文件集中在 `~/go2`。systemd 用户服务定义保留
 
 支持 `status`、`start`、`stop`、`restart`、`enable`、`disable` 和 `logs`，分组为 `all`、`wireless`、`sensors`。无线分组通过 `go2-wifi-stack.target` 同时管理有线源端 relay、Wi-Fi 出口 relay 和 ROS graph announcer。`go2-slam-inputs` 已停用并清理，不属于当前服务集。
 
+无线服务组已设为 Go2 开机自动启动：`default.target` 会拉起 `go2-wifi-stack.target`，再启动两个 C++ relay 和 graph announcer。`unitree` 用户需启用 linger，确保开机时没有交互登录也会启动用户级 systemd：
+
+```bash
+sudo loginctl enable-linger unitree
+~/go2/go2-services.sh enable wireless
+~/go2/go2-services.sh status wireless
+```
+
+启用后应看到 `go2-wifi-stack.target`、`go2-wifi-relay.service`、`go2-wifi-relay-wifi.service` 和 `go2-wifi-graph-announcer.service` 均为 enabled。此设置已部署到当前 Go2 并确认四个单元均为 active；尚未通过重启 Go2 做断电级验证。
+
 服务定义引用的实现和配置位于 `~/go2/services/voxel_ws`；DDS runtime、Unitree Python SDK 和无线 relay 分别位于 `~/go2/runtime`、`~/go2/vendor`、`~/go2/relay`。地图保存在 `~/go2/data`，迁移备份和诊断数据保存在 `~/go2/archive`。

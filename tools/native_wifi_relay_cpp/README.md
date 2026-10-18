@@ -34,7 +34,14 @@ binary only after the build succeeds. Manage ingress, egress, and graph discover
 systemctl --user start go2-wifi-stack.target
 systemctl --user stop go2-wifi-stack.target
 systemctl --user status go2-wifi-stack.target
+systemctl --user enable go2-wifi-stack.target
+systemctl --user enable go2-wifi-relay-wifi.service
 ```
+
+For startup without an interactive login, enable linger for the `unitree`
+account (`sudo loginctl enable-linger unitree`). The stack target is wanted by
+the user `default.target`; its Wants dependencies start ingress, Wi-Fi egress,
+and graph discovery together.
 
 The DDS descriptor source is in `relay_types.idl` and `unitree_relay.idl`;
 generated C descriptors are kept under `generated/`.
