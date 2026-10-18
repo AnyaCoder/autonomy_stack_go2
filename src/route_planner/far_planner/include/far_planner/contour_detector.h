@@ -10,7 +10,7 @@ struct ContourDetectParams {
     float voxel_dim;
     float kRatio;
     int   kThredValue;
-    int   kBlurSize;
+    float padding_m;
     bool  is_save_img;
     std::string img_path;
 };

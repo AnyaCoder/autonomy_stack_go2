@@ -5,6 +5,7 @@
  */
 
 #include "far_planner/contour_detector.h"
+#include "far_planner/contour_image.h"
 
 // const static int BLUR_SIZE = 10;
 
@@ -40,33 +41,19 @@ void ContourDetector::BuildTerrainImgAndExtractContour(const NavNodePtr& odom_no
 }
 
 void ContourDetector::UpdateImgMatWithCloud(const PointCloudPtr& pc, cv::Mat& img_mat) {
-    int row_idx, col_idx, inf_row, inf_col;
-    const std::vector<int> inflate_vec{-1, 0, 1};
+    int row_idx, col_idx;
     for (const auto& pcl_p : pc->points) {
         this->PointToImgSub(pcl_p, odom_pos_, row_idx, col_idx, false, false);
         if (!this->IsIdxesInImg(row_idx, col_idx)) continue;
-        for (const auto& dr : inflate_vec) {
-            for (const auto& dc : inflate_vec) {
-                inf_row = row_idx+dr, inf_col = col_idx+dc;
-                if (this->IsIdxesInImg(inf_row, inf_col)) {
-                    img_mat.at<float>(inf_row, inf_col) += 1.0;
-                }
-            }
-        }
-    }
-    if (!FARUtil::IsStaticEnv) {
-        cv::threshold(img_mat, img_mat, cd_params_.kThredValue, 1.0, cv::ThresholdTypes::THRESH_BINARY);
+        img_mat.at<float>(row_idx, col_idx) += 1.0;
     }
     if (cd_params_.is_save_img) this->SaveCurrentImg(img_mat);
 }
 
 void ContourDetector::ResizeAndBlurImg(const cv::Mat& img, cv::Mat& Rimg) {
-    img.convertTo(Rimg, CV_8UC1, 255);
-    cv::resize(Rimg, Rimg, cv::Size(), cd_params_.kRatio, cd_params_.kRatio, 
-               cv::InterpolationFlags::INTER_LINEAR);
-    //cv::morphologyEx(Rimg, Rimg, cv::MORPH_OPEN, getStructuringElement(cv::MORPH_RECT, cv::Size(3, 3)));
-    cv::boxFilter(Rimg, Rimg, -1, cv::Size(cd_params_.kBlurSize, cd_params_.kBlurSize), cv::Point2i(-1, -1), false);
-    //cv::morphologyEx(Rimg, Rimg, cv::MORPH_CLOSE, getStructuringElement(cv::MORPH_RECT, cv::Size(cd_params_.kBlurSize+2, cd_params_.kBlurSize+2)));
+    Rimg = far_contour::BuildImage(img, cd_params_.kRatio, cd_params_.kThredValue,
+                                   !FARUtil::IsStaticEnv, cd_params_.voxel_dim,
+                                   cd_params_.padding_m);
 }
 
 void ContourDetector::ExtractContourFromImg(const cv::Mat& img,

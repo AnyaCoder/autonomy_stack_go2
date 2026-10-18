@@ -41,6 +41,7 @@ private:
     // rviz publisher 
     rclcpp::Publisher<Marker>::SharedPtr viz_path_pub_;
     rclcpp::Publisher<MarkerArray>::SharedPtr viz_node_pub_, viz_graph_pub_, viz_poly_pub_, viz_contour_pub_, viz_map_pub_, viz_view_extend;
+    rclcpp::Publisher<MarkerArray>::SharedPtr viz_robot_model_pub_;
 
     // marker set for nodes visualization based on MarkerHash
     std::unordered_set<Marker, MarkerHash> marker_set_;
@@ -63,6 +64,8 @@ public:
 
     // True for non-attempts path
     void VizPath(const NodePtrStack& global_path, const bool& is_free_nav=false);
+
+    void VizGo2Model();
 
     void VizMapGrids(const PointStack& neighbor_centers, 
                      const PointStack& occupancy_centers,

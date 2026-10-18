@@ -156,7 +156,7 @@ private:
     }
 
     inline void JoyCommandCallBack(const sensor_msgs::msg::Joy::SharedPtr msg) {
-        if (msg->buttons[4] > 0.5) {
+        if (msg->buttons.size() > 4 && msg->buttons[4] > 0.5) {
             is_reset_env_ = true;
         }
     } 

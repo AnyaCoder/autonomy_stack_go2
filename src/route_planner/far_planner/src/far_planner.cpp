@@ -7,6 +7,7 @@
 
 
 #include "far_planner/far_planner.h"
+#include <stdexcept>
 
 /***************************************************************************************/
 FARMaster::FARMaster()
@@ -622,15 +623,19 @@ void FARMaster::LoadROSParams() {
   // contour detector params
   nh_->declare_parameter<float>(cdetect_prefix + "/resize_ratio", 5.0);
   nh_->declare_parameter<int>(cdetect_prefix   + "/filter_count_value", 5);
+  nh_->declare_parameter<float>(cdetect_prefix + "/contour_padding_m", 0.02);
   nh_->declare_parameter<bool>(cdetect_prefix  + "/is_save_img", false);
   nh_->declare_parameter<std::string>(cdetect_prefix + "/img_folder_path", "");
 
   nh_->get_parameter(cdetect_prefix + "/resize_ratio", cdetect_params_.kRatio);
   nh_->get_parameter(cdetect_prefix + "/filter_count_value", cdetect_params_.kThredValue);
+  nh_->get_parameter(cdetect_prefix + "/contour_padding_m", cdetect_params_.padding_m);
+  if (!std::isfinite(cdetect_params_.padding_m) || cdetect_params_.padding_m < 0.0f) {
+    throw std::invalid_argument("c_detector/contour_padding_m must be finite and nonnegative");
+  }
   nh_->get_parameter(cdetect_prefix + "/is_save_img", cdetect_params_.is_save_img);
   nh_->get_parameter(cdetect_prefix + "/img_folder_path", cdetect_params_.img_path);
 
-  cdetect_params_.kBlurSize    = (int)std::round(FARUtil::kNavClearDist / master_params_.voxel_dim);
   cdetect_params_.sensor_range = master_params_.sensor_range;
   cdetect_params_.voxel_dim    = master_params_.voxel_dim;
 }
@@ -666,6 +671,7 @@ void FARMaster::OdomCallBack(const nav_msgs::msg::Odometry::SharedPtr msg) {
   double roll, pitch, yaw;
   tf_odom_pose.getBasis().getRPY(roll, pitch, yaw);
   robot_heading_ = Point3D(cos(yaw), sin(yaw), 0);
+  planner_viz_.VizGo2Model();
 
   if (!is_odom_init_) {
     // system start time

@@ -47,6 +47,9 @@ far_planner:
     # Corner Detector Params
     c_detector/resize_ratio: 3.0
     c_detector/filter_count_value: 4
+    # Outline padding only; robot footprint and path collision checks are separate.
+    # Quantized up to the resized image pixel size (0.1 / 3 m).
+    c_detector/contour_padding_m: 0.02
     c_detector/is_save_img: false
     c_detector/img_folder_path: /path
 

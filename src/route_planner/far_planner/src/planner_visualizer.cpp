@@ -7,6 +7,7 @@
 
 
 #include "far_planner/planner_visualizer.h"
+#include <utility>
 
 /***************************************************************************************/
 
@@ -22,8 +23,79 @@ void DPVisualizer::Init(const rclcpp::Node::SharedPtr nh) {
     viz_contour_pub_ = nh_->create_publisher<visualization_msgs::msg::MarkerArray>("/viz_contour_topic", 5);
     viz_map_pub_     = nh_->create_publisher<visualization_msgs::msg::MarkerArray>("/viz_grid_map_topic", 5);
     viz_view_extend  = nh_->create_publisher<visualization_msgs::msg::MarkerArray>("/viz_viewpoint_extend_topic", 5);
+    viz_robot_model_pub_ = nh_->create_publisher<MarkerArray>("/far_robot_model", 5);
     // init marker set
     marker_set_.clear();
+}
+
+void DPVisualizer::VizGo2Model() {
+    MarkerArray model;
+    auto make_marker = [this](int id, const std::string& name, int type,
+                              float x, float y, float z,
+                              float r, float g, float b, float alpha) {
+        Marker marker;
+        marker.header.frame_id = "vehicle";
+        marker.header.stamp = nh_->now();
+        marker.ns = name;
+        marker.id = id;
+        marker.type = type;
+        marker.action = Marker::ADD;
+        marker.pose.orientation.w = 1.0;
+        marker.scale.x = x;
+        marker.scale.y = y;
+        marker.scale.z = z;
+        marker.color.r = r;
+        marker.color.g = g;
+        marker.color.b = b;
+        marker.color.a = alpha;
+        marker.lifetime.sec = 0;
+        marker.lifetime.nanosec = 500000000;
+        return marker;
+    };
+
+    Marker body = make_marker(0, "go2_body", Marker::CUBE,
+                              0.44f, 0.27f, 0.16f,
+                              0.2f, 0.55f, 0.9f, 0.9f);
+    body.pose.position.z = 0.30;
+    model.markers.push_back(body);
+
+    int id = 0;
+    for (const double x : {-0.26, 0.26}) {
+        for (const double y : {-0.14, 0.14}) {
+            Marker leg = make_marker(id++, "go2_legs", Marker::CUBE,
+                                     0.08f, 0.07f, 0.28f,
+                                     0.25f, 0.28f, 0.32f, 0.95f);
+            leg.pose.position.x = x;
+            leg.pose.position.y = y;
+            leg.pose.position.z = 0.14;
+            model.markers.push_back(leg);
+        }
+    }
+
+    Marker footprint = make_marker(0, "go2_footprint", Marker::LINE_STRIP,
+                                   0.025f, 0.0f, 0.0f,
+                                   0.1f, 0.35f, 1.0f, 1.0f);
+    footprint.pose.position.z = 0.025;
+    for (const auto& corner : {std::pair<double, double>{-0.35, -0.20},
+                               {0.35, -0.20}, {0.35, 0.20},
+                               {-0.35, 0.20}, {-0.35, -0.20}}) {
+        geometry_msgs::msg::Point point;
+        point.x = corner.first;
+        point.y = corner.second;
+        footprint.points.push_back(point);
+    }
+    model.markers.push_back(footprint);
+
+    Marker heading = make_marker(0, "go2_heading", Marker::ARROW,
+                                 0.04f, 0.08f, 0.10f,
+                                 1.0f, 0.8f, 0.0f, 1.0f);
+    geometry_msgs::msg::Point start, end;
+    start.z = end.z = 0.06;
+    end.x = 0.34;
+    heading.points = {start, end};
+    model.markers.push_back(heading);
+
+    viz_robot_model_pub_->publish(model);
 }
 
 void DPVisualizer::VizNodes(const NodePtrStack& node_stack, 
@@ -242,7 +314,7 @@ void DPVisualizer::VizGraph(const NodePtrStack& graph) {
     this->SetMarker(nh_, VizColor::ORANGE,  "frontier_vertex",   0.5f,  0.8f,  frontier_node_marker);
     this->SetMarker(nh_, VizColor::WHITE,   "global_vgraph",     0.1f,  0.2f,  edge_marker);
     this->SetMarker(nh_, VizColor::EMERALD, "freespace_vgraph",  0.1f,  0.25f, free_edge_marker);
-    this->SetMarker(nh_, VizColor::EMERALD, "visibility_edge",   0.1f,  0.25f, visual_edge_marker);
+    this->SetMarker(nh_, VizColor::BLUE,    "visibility_edge",   0.1f,  0.65f, visual_edge_marker);
     this->SetMarker(nh_, VizColor::RED,     "polygon_edge",      0.15f, 0.25f, contour_edge_marker);
     this->SetMarker(nh_, VizColor::ORANGE,  "boundary_edge",     0.2f,  0.25f, boundary_edge_marker);
     this->SetMarker(nh_, VizColor::ORANGE,  "odom_edge",         0.1f,  0.15f, odom_edge_marker);

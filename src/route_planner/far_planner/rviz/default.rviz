@@ -31,6 +31,42 @@ Panels:
 Visualization Manager:
   Class: ""
   Displays:
+    - Class: rviz_default_plugins/PointCloud2
+      Name: Local Collision Obstacles
+      Enabled: true
+      Alpha: 1
+      Color: 255; 40; 200
+      Color Transformer: FlatColor
+      Position Transformer: XYZ
+      Style: Points
+      Size (Pixels): 4
+      Size (m): 0.02
+      Decay Time: 0
+      Selectable: true
+      Use Fixed Frame: true
+      Topic:
+        Depth: 2
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /local_planner/collision_obstacles
+      Value: true
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: true
+      Name: Go2 Collision Footprint
+      Namespaces:
+        body_envelope: true
+        measurement_margin: true
+        collision_envelope: true
+        collision_area: true
+        body_forward: true
+      Topic:
+        Depth: 1
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /local_planner/collision_footprint
+      Value: true
     - Class: rviz_default_plugins/Axes
       Enabled: true
       Length: 1
@@ -77,7 +113,7 @@ Visualization Manager:
       Class: rviz_default_plugins/PointCloud2
       Color: 255; 255; 255
       Color Transformer: FlatColor
-      Decay Time: 10
+      Decay Time: 20
       Enabled: true
       Invert Rainbow: false
       Max Color: 255; 255; 255
@@ -91,11 +127,11 @@ Visualization Manager:
       Size (m): 0.05000000074505806
       Style: Points
       Topic:
-        Depth: 5
+        Depth: 2
         Durability Policy: Volatile
-        Filter size: 10
+        Filter size: 2
         History Policy: Keep Last
-        Reliability Policy: Reliable
+        Reliability Policy: Best Effort
         Value: /registered_scan
       Use Fixed Frame: true
       Use rainbow: true
@@ -350,13 +386,28 @@ Visualization Manager:
         updating_vertex: false
         vertex_angle: false
         vertices_matches: false
-        visibility_edge: false
+        visibility_edge: true
       Topic:
         Depth: 5
         Durability Policy: Volatile
         History Policy: Keep Last
         Reliability Policy: Reliable
         Value: /viz_graph_topic
+      Value: true
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: true
+      Name: Go2Model
+      Namespaces:
+        go2_body: true
+        go2_footprint: false
+        go2_heading: true
+        go2_legs: true
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /far_robot_model
       Value: true
     - Class: rviz_default_plugins/MarkerArray
       Enabled: true

@@ -160,7 +160,7 @@ void terrainCloudLocalHandler(const sensor_msgs::msg::PointCloud2::ConstSharedPt
 // joystick callback function
 void joystickHandler(const sensor_msgs::msg::Joy::ConstSharedPtr joy)
 {
-  if (joy->buttons[5] > 0.5)
+  if (joy->buttons.size() > 5 && joy->buttons[5] > 0)
   {
     clearingCloud = true;
   }
