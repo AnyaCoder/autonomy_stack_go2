@@ -1,7 +1,11 @@
 #include <time.h>
+#include "local_planner/footprint_collision.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <chrono>
+#include <cmath>
+#include <limits>
+#include <cstring>
 
 #include "rclcpp/rclcpp.hpp"
 #include "rclcpp/time.hpp"
@@ -16,10 +20,13 @@
 #include <std_msgs/msg/int8.hpp>
 #include <nav_msgs/msg/path.hpp>
 #include <geometry_msgs/msg/twist_stamped.hpp>
+#include <geometry_msgs/msg/point_stamped.hpp>
 #include <sensor_msgs/msg/imu.h>
 
 #include "tf2/transform_datatypes.h"
 #include "tf2_ros/transform_broadcaster.h"
+#include "tf2_ros/buffer.h"
+#include "tf2_ros/transform_listener.h"
 #include "tf2_geometry_msgs/tf2_geometry_msgs.h"
 
 #include <pcl/filters/voxel_grid.h>
@@ -36,6 +43,7 @@
 
 // For real robot
 #include "unitree_api/msg/request.hpp"
+#include "unitree_go/msg/low_state.hpp"
 #include "common/ros2_sport_client.h"
 
 using namespace std;
@@ -76,6 +84,25 @@ double autonomySpeed = 1.0;
 double joyToSpeedDelay = 2.0;
 double goalCloseDis = 1.0;
 bool is_real_robot = false;
+double maxWaypointSpeed = 0.35;
+double maxWaypointYawRate = 0.5;
+double waypointProgressTimeout = 20.0;
+double waypointProgressDistance = 0.1;
+double odomTimeout = 0.5;
+double pathTimeout = 1.0;
+double go2CommandPeriod = 0.1;
+double remoteTimeout = 0.5;
+footprint_collision::Footprint collisionFootprint;
+footprint_collision::ObstacleIndex collisionObstacles;
+bool checkObstacle = true;
+bool checkRotObstacle = true;
+double collisionReactionTime = 0.2;
+double collisionDeceleration = 0.8;
+double collisionAngularDeceleration = 1.0;
+double collisionCloudTimeout = 0.5;
+double collisionCloudReceivedAt = 0;
+std::string collisionFrame;
+double remoteStickDeadzone = 0.15;
 
 float joySpeed = 0;
 float joySpeedRaw = 0;
@@ -103,6 +130,7 @@ float vehicleYawRate = 0;
 float vehicleSpeed = 0;
 
 double odomTime = 0;
+std::string odomFrame;
 double joyTime = 0;
 double slowInitTime = 0;
 double stopInitTime = false;
@@ -110,6 +138,20 @@ int pathPointID = 0;
 bool pathInit = false;
 bool navFwd = true;
 double switchTime = 0;
+double odomReceivedAt = 0;
+double pathReceivedAt = 0;
+double progressStartedAt = 0;
+double bestGoalDistance = std::numeric_limits<double>::infinity();
+bool goalPending = false;
+bool goalActive = false;
+bool awaitingGoalPath = false;
+geometry_msgs::msg::PointStamped pendingGoal;
+geometry_msgs::msg::PointStamped activeGoal;
+std::shared_ptr<tf2_ros::Buffer> goalTfBuffer;
+double lastGoalReceivedAt = 0;
+double remoteReceivedAt = 0;
+bool remoteInputActive = false;
+bool remoteTakeover = false;
 
 nav_msgs::msg::Path path;
 rclcpp::Node::SharedPtr nh;
@@ -119,6 +161,9 @@ SportClient sport_req;
 
 void odomHandler(const nav_msgs::msg::Odometry::ConstSharedPtr odomIn)
 {
+  odomFrame = odomIn->header.frame_id;
+  odomReceivedAt = std::chrono::duration<double>(
+      std::chrono::steady_clock::now().time_since_epoch()).count();
   odomTime = rclcpp::Time(odomIn->header.stamp).seconds();
   double roll, pitch, yaw;
   geometry_msgs::msg::Quaternion geoQuat = odomIn->pose.pose.orientation;
@@ -143,6 +188,18 @@ void odomHandler(const nav_msgs::msg::Odometry::ConstSharedPtr odomIn)
 void pathHandler(const nav_msgs::msg::Path::ConstSharedPtr pathIn)
 {
   int pathSize = pathIn->poses.size();
+  if (pathIn->header.frame_id != "vehicle") {
+    RCLCPP_WARN_THROTTLE(nh->get_logger(), *nh->get_clock(), 5000,
+                         "Ignoring local path in unexpected frame '%s'",
+                         pathIn->header.frame_id.c_str());
+    return;
+  }
+  if (pathSize < 2) {
+    pathInit = false;
+    return;
+  }
+  pathReceivedAt = std::chrono::duration<double>(
+      std::chrono::steady_clock::now().time_since_epoch()).count();
   path.poses.resize(pathSize);
   for (int i = 0; i < pathSize; i++) {
     path.poses[i].pose.position.x = pathIn->poses[i].pose.position.x;
@@ -159,6 +216,47 @@ void pathHandler(const nav_msgs::msg::Path::ConstSharedPtr pathIn)
 
   pathPointID = 0;
   pathInit = true;
+  if (goalActive && !goalPending) awaitingGoalPath = false;
+}
+
+void goalHandler(const geometry_msgs::msg::PointStamped::ConstSharedPtr goal)
+{
+  if (goal->header.frame_id.empty() || !std::isfinite(goal->point.x) ||
+      !std::isfinite(goal->point.y)) {
+    RCLCPP_WARN(nh->get_logger(), "Ignoring waypoint without a valid frame and position");
+    return;
+  }
+  const double now = std::chrono::duration<double>(
+      std::chrono::steady_clock::now().time_since_epoch()).count();
+  if (now - lastGoalReceivedAt < 0.2 &&
+      goal->header.stamp == pendingGoal.header.stamp &&
+      goal->point.x == pendingGoal.point.x && goal->point.y == pendingGoal.point.y) {
+    return;
+  }
+  lastGoalReceivedAt = now;
+  pendingGoal = *goal;
+  goalPending = true;
+  goalActive = false;
+  awaitingGoalPath = true;
+  pathInit = false;
+  remoteTakeover = false;
+}
+
+void remoteHandler(const unitree_go::msg::LowState::ConstSharedPtr state)
+{
+  remoteReceivedAt = std::chrono::duration<double>(
+      std::chrono::steady_clock::now().time_since_epoch()).count();
+  const auto &data = state->wireless_remote;
+  // Unitree joystick layout: keys at 2-3; lx, rx, ry, ly at 4, 8, 12, 20.
+  float axes[4];
+  for (int i = 0; i < 3; ++i) {
+    std::memcpy(&axes[i], data.data() + 4 + 4 * i, sizeof(float));
+  }
+  std::memcpy(&axes[3], data.data() + 20, sizeof(float));
+  remoteInputActive = data[2] != 0 || data[3] != 0;
+  for (float axis : axes) {
+    remoteInputActive |= std::isfinite(axis) && std::fabs(axis) > remoteStickDeadzone;
+  }
 }
 
 void joystickHandler(const sensor_msgs::msg::Joy::ConstSharedPtr joy)
@@ -209,6 +307,17 @@ void stopHandler(const std_msgs::msg::Int8::ConstSharedPtr stop)
   safetyStop = stop->data;
 }
 
+void collisionCloudHandler(const sensor_msgs::msg::PointCloud2::ConstSharedPtr msg)
+{
+  pcl::PointCloud<pcl::PointXYZI> points;
+  pcl::fromROSMsg(*msg, points);
+  collisionObstacles.clear();
+  for (const auto& p : points) collisionObstacles.add(p.x, p.y);
+  collisionFrame = msg->header.frame_id;
+  collisionCloudReceivedAt = std::chrono::duration<double>(
+      std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
 int main(int argc, char** argv)
 {
   rclcpp::init(argc, argv);
@@ -246,6 +355,24 @@ int main(int argc, char** argv)
   nh->declare_parameter<double>("joyToSpeedDelay", joyToSpeedDelay);
   nh->declare_parameter<double>("goalCloseDis", goalCloseDis);
   nh->declare_parameter<bool>("is_real_robot", is_real_robot);
+  nh->declare_parameter<double>("maxWaypointSpeed", maxWaypointSpeed);
+  nh->declare_parameter<double>("maxWaypointYawRate", maxWaypointYawRate);
+  nh->declare_parameter<double>("waypointProgressTimeout", waypointProgressTimeout);
+  nh->declare_parameter<double>("waypointProgressDistance", waypointProgressDistance);
+  nh->declare_parameter<double>("odomTimeout", odomTimeout);
+  nh->declare_parameter<double>("pathTimeout", pathTimeout);
+  nh->declare_parameter<double>("go2CommandPeriod", go2CommandPeriod);
+  nh->declare_parameter<double>("remoteTimeout", remoteTimeout);
+  nh->declare_parameter<double>("vehicleLength", collisionFootprint.length);
+  nh->declare_parameter<double>("vehicleWidth", collisionFootprint.width);
+  nh->declare_parameter<double>("collisionMeasurementMargin", collisionFootprint.measurement_margin);
+  nh->declare_parameter<double>("collisionTrackingMargin", collisionFootprint.tracking_margin);
+  nh->declare_parameter<bool>("checkObstacle", checkObstacle);
+  nh->declare_parameter<bool>("checkRotObstacle", checkRotObstacle);
+  nh->declare_parameter<double>("collisionReactionTime", collisionReactionTime);
+  nh->declare_parameter<double>("collisionDeceleration", collisionDeceleration);
+  nh->declare_parameter<double>("collisionAngularDeceleration", collisionAngularDeceleration);
+  nh->declare_parameter<double>("collisionCloudTimeout", collisionCloudTimeout);
 
   nh->get_parameter("sensorOffsetX", sensorOffsetX);
   nh->get_parameter("sensorOffsetY", sensorOffsetY);
@@ -279,10 +406,42 @@ int main(int argc, char** argv)
   nh->get_parameter("joyToSpeedDelay", joyToSpeedDelay);
   nh->get_parameter("goalCloseDis", goalCloseDis);
   nh->get_parameter("is_real_robot", is_real_robot);
+  nh->get_parameter("maxWaypointSpeed", maxWaypointSpeed);
+  nh->get_parameter("maxWaypointYawRate", maxWaypointYawRate);
+  nh->get_parameter("waypointProgressTimeout", waypointProgressTimeout);
+  nh->get_parameter("waypointProgressDistance", waypointProgressDistance);
+  nh->get_parameter("odomTimeout", odomTimeout);
+  nh->get_parameter("pathTimeout", pathTimeout);
+  nh->get_parameter("go2CommandPeriod", go2CommandPeriod);
+  nh->get_parameter("remoteTimeout", remoteTimeout);
+  nh->get_parameter("vehicleLength", collisionFootprint.length);
+  nh->get_parameter("vehicleWidth", collisionFootprint.width);
+  nh->get_parameter("collisionMeasurementMargin", collisionFootprint.measurement_margin);
+  nh->get_parameter("collisionTrackingMargin", collisionFootprint.tracking_margin);
+  nh->get_parameter("checkObstacle", checkObstacle);
+  nh->get_parameter("checkRotObstacle", checkRotObstacle);
+  nh->get_parameter("collisionReactionTime", collisionReactionTime);
+  nh->get_parameter("collisionDeceleration", collisionDeceleration);
+  nh->get_parameter("collisionAngularDeceleration", collisionAngularDeceleration);
+  nh->get_parameter("collisionCloudTimeout", collisionCloudTimeout);
+  collisionFootprint.validate();
+  if (!std::isfinite(collisionReactionTime) || collisionReactionTime < 0 ||
+      !std::isfinite(collisionDeceleration) || collisionDeceleration <= 0 ||
+      !std::isfinite(collisionAngularDeceleration) || collisionAngularDeceleration <= 0 ||
+      !std::isfinite(collisionCloudTimeout) || collisionCloudTimeout <= 0)
+    throw std::invalid_argument("Invalid collision reaction/braking parameters");
+
+  auto subCollision = nh->create_subscription<sensor_msgs::msg::PointCloud2>(
+      "/local_planner/collision_obstacles", 2, collisionCloudHandler);
 
   auto subOdom = nh->create_subscription<nav_msgs::msg::Odometry>("/state_estimation", 5, odomHandler);
 
   auto subPath = nh->create_subscription<nav_msgs::msg::Path>("/path", 5, pathHandler);
+  auto subGoal = nh->create_subscription<geometry_msgs::msg::PointStamped>("/way_point", 5, goalHandler);
+  auto subRemote = nh->create_subscription<unitree_go::msg::LowState>(
+      "/lowstate", rclcpp::SensorDataQoS(), remoteHandler);
+  goalTfBuffer = std::make_shared<tf2_ros::Buffer>(nh->get_clock());
+  auto goalTfListener = std::make_shared<tf2_ros::TransformListener>(*goalTfBuffer, nh, false);
 
   auto subJoystick = nh->create_subscription<sensor_msgs::msg::Joy>("/joy", 5, joystickHandler);
 
@@ -307,10 +466,59 @@ int main(int argc, char** argv)
   rclcpp::Rate rate(100);
   bool status = rclcpp::ok();
   bool go2ControlActive = false;
+  bool cmdVelActive = false;
+  double lastMoveAt = 0;
   while (status) {
     rclcpp::spin_some(nh);
+    const double now = std::chrono::duration<double>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+    if (goalPending && !odomFrame.empty()) {
+      try {
+        auto goalToTransform = pendingGoal;
+        goalToTransform.header.stamp = rclcpp::Time(0);
+        activeGoal = goalTfBuffer->transform(goalToTransform, odomFrame);
+        goalPending = false;
+        goalActive = true;
+        pathInit = false;
+        bestGoalDistance = std::numeric_limits<double>::infinity();
+        progressStartedAt = now;
+      } catch (const tf2::TransformException &exc) {
+        RCLCPP_WARN_THROTTLE(nh->get_logger(), *nh->get_clock(), 2000,
+                             "Waiting for waypoint transform: %s", exc.what());
+      }
+    }
 
-    if (pathInit) {
+    const bool odomFresh = odomReceivedAt > 0 && now - odomReceivedAt < odomTimeout;
+    const bool pathFresh = pathInit && now - pathReceivedAt < pathTimeout;
+    const bool remoteFresh = remoteReceivedAt > 0 && now - remoteReceivedAt < remoteTimeout;
+    if (is_real_robot && remoteFresh && remoteInputActive && !remoteTakeover) {
+      remoteTakeover = true;
+      goalActive = false;
+      goalPending = false;
+      awaitingGoalPath = false;
+      pathInit = false;
+      go2ControlActive = false;
+      RCLCPP_WARN(nh->get_logger(), "Remote controller input: navigation released");
+    }
+    if (goalActive && odomFresh) {
+      const double goalDistance = std::hypot(
+          activeGoal.point.x - vehicleX, activeGoal.point.y - vehicleY);
+      if (goalDistance <= goalCloseDis) {
+        goalActive = false;
+        RCLCPP_INFO(nh->get_logger(), "Waypoint reached (%.2f m)", goalDistance);
+      } else if (goalDistance < bestGoalDistance - waypointProgressDistance) {
+        bestGoalDistance = goalDistance;
+        progressStartedAt = now;
+      } else if (now - progressStartedAt > waypointProgressTimeout) {
+        goalActive = false;
+        RCLCPP_WARN(nh->get_logger(), "Waypoint aborted: no progress for %.1f s",
+                    waypointProgressTimeout);
+      }
+    }
+
+    if (pathFresh && odomFresh &&
+        (!is_real_robot || (!remoteTakeover && (autonomyMode || remoteFresh))) &&
+        (!autonomyMode || goalActive)) {
       float vehicleXRel = cos(vehicleYawRec) * (vehicleX - vehicleXRec) 
                         + sin(vehicleYawRec) * (vehicleY - vehicleYRec);
       float vehicleYRel = -sin(vehicleYawRec) * (vehicleX - vehicleXRec) 
@@ -356,6 +564,11 @@ int main(int argc, char** argv)
       }
 
       float joySpeed2 = maxSpeed * joySpeed;
+      if (is_real_robot && autonomyMode) {
+        joySpeed2 = std::min(joySpeed2, static_cast<float>(maxWaypointSpeed));
+        vehicleSpeed = std::max(-maxWaypointSpeed,
+            std::min(maxWaypointSpeed, static_cast<double>(vehicleSpeed)));
+      }
       if (!navFwd) {
         dirDiff += PI;
         if (dirDiff > PI) dirDiff -= 2 * PI;
@@ -422,33 +635,95 @@ int main(int argc, char** argv)
           cmd_vel.twist.linear.y = maxSpeed / 2.0 * joyManualLeft;
           cmd_vel.twist.angular.z = maxYawRate * PI / 180.0 * joyManualYaw;
         }
+        if (is_real_robot && autonomyMode) {
+          cmd_vel.twist.angular.z = std::max(-maxWaypointYawRate,
+              std::min(maxWaypointYawRate, cmd_vel.twist.angular.z));
+        }
+
+        if (checkObstacle && !manualMode) {
+          const bool cloudFresh = collisionCloudReceivedAt > 0 &&
+              now - collisionCloudReceivedAt < collisionCloudTimeout && collisionFrame == odomFrame;
+          const double yawRate = checkRotObstacle ? cmd_vel.twist.angular.z : 0.0;
+          const double scale = cloudFresh ? collisionObstacles.safeCommandScale(
+              {vehicleX, vehicleY, vehicleYaw}, cmd_vel.twist.linear.x, cmd_vel.twist.linear.y,
+              yawRate, collisionFootprint, collisionReactionTime,
+              collisionDeceleration, collisionAngularDeceleration) : 0.0;
+          if (scale < 1) {
+            cmd_vel.twist.linear.x *= scale;
+            cmd_vel.twist.linear.y *= scale;
+            cmd_vel.twist.angular.z *= scale;
+            // Keep the speed integrator at the attainable velocity. Resetting it
+            // to zero here would repeatedly accelerate and stop near a wall.
+            vehicleSpeed *= scale;
+            vehicleYawRate *= scale;
+            if (std::hypot(cmd_vel.twist.linear.x, cmd_vel.twist.linear.y) < 0.01 &&
+                std::abs(cmd_vel.twist.angular.z) < 0.01) {
+              cmd_vel.twist = geometry_msgs::msg::Twist();
+              vehicleSpeed = 0;
+              vehicleYawRate = 0;
+            }
+            RCLCPP_WARN_THROTTLE(nh->get_logger(), *nh->get_clock(), 2000,
+                "Footprint collision check: %s", cloudFresh ? "limiting motion near obstacle" : "waiting for fresh obstacle cloud");
+          }
+        }
 
         pubSpeed->publish(cmd_vel);
+        cmdVelActive = fabs(cmd_vel.twist.linear.x) > 0.01 ||
+            fabs(cmd_vel.twist.linear.y) > 0.01 ||
+            fabs(cmd_vel.twist.angular.z) > 0.01;
 
         pubSkipCount = pubSkipNum;
 
         if (is_real_robot) {
-          const bool inputActive = autonomyMode ||
+          const bool inputActive = (autonomyMode && goalActive) ||
               (joyTime > 0 && nh->now().seconds() - joyTime < 0.5 &&
+               !autonomyMode &&
                (fabs(joyManualFwd) > 0.01 || fabs(joyManualLeft) > 0.01 ||
                 fabs(joyManualYaw) > 0.01 || fabs(joyYaw) > 0.01));
-          if (inputActive) {
-            if (cmd_vel.twist.linear.x == 0 && cmd_vel.twist.linear.y == 0 &&
-                cmd_vel.twist.angular.z == 0) {
-              sport_req.StopMove(req);
-            } else {
-              sport_req.Move(req, cmd_vel.twist.linear.x,
-                             cmd_vel.twist.linear.y, cmd_vel.twist.angular.z);
-            }
+          const bool moving = fabs(cmd_vel.twist.linear.x) > 0.01 ||
+              fabs(cmd_vel.twist.linear.y) > 0.01 ||
+              fabs(cmd_vel.twist.angular.z) > 0.01;
+          if (inputActive && moving &&
+              (!autonomyMode || now - lastMoveAt >= go2CommandPeriod)) {
+            sport_req.Move(req, cmd_vel.twist.linear.x,
+                           cmd_vel.twist.linear.y, cmd_vel.twist.angular.z);
             pubGo2Request->publish(req);
             go2ControlActive = true;
-          } else if (go2ControlActive) {
+            lastMoveAt = now;
+          } else if ((!inputActive || !moving) && go2ControlActive) {
             sport_req.StopMove(req);
             pubGo2Request->publish(req);
             go2ControlActive = false;
           }
         }
       }
+    }
+    if (is_real_robot && go2ControlActive &&
+        (!odomFresh || !pathFresh || (!autonomyMode && !remoteFresh) ||
+         (autonomyMode && !goalActive))) {
+      // A replacement goal deliberately invalidates the old path. Stop once,
+      // but keep that goal alive until its first path arrives (or it times out).
+      const bool waitingForGoalPath = autonomyMode &&
+          (goalPending || (goalActive && awaitingGoalPath));
+      if (!odomFresh || (!autonomyMode && !remoteFresh) ||
+          (!pathFresh && !waitingForGoalPath)) {
+        goalActive = false;
+        awaitingGoalPath = false;
+        pathInit = false;
+      }
+      vehicleSpeed = 0;
+      vehicleYawRate = 0;
+      sport_req.StopMove(req);
+      pubGo2Request->publish(req);
+      go2ControlActive = false;
+    }
+    if (cmdVelActive &&
+        (!odomFresh || !pathFresh || (autonomyMode && !goalActive) ||
+         (is_real_robot && ((!autonomyMode && !remoteFresh) || remoteTakeover)))) {
+      cmd_vel.twist = geometry_msgs::msg::Twist();
+      cmd_vel.header.stamp = nh->now();
+      pubSpeed->publish(cmd_vel);
+      cmdVelActive = false;
     }
 
     status = rclcpp::ok();

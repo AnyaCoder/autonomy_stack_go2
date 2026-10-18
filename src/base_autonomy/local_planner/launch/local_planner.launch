@@ -1,5 +1,10 @@
 <launch>
 
+  <!-- Go2 walking envelope centred on vehicle; all lengths in metres. -->
+  <arg name="vehicleLength" default="0.70"/>
+  <arg name="vehicleWidth" default="0.40"/>
+  <arg name="collisionMeasurementMargin" default="0.02"/>
+  <arg name="collisionTrackingMargin" default="0.03"/>
   <arg name="sensorOffsetX" default="0.0"/>
   <arg name="sensorOffsetY" default="0.0"/>
   <arg name="cameraOffsetZ" default="0.0"/>
@@ -12,26 +17,28 @@
   <arg name="goalX" default="0.0"/>
   <arg name="goalY" default="0.0"/>
   <arg name="is_real_robot" default="true"/>
+  <arg name="sport_request_topic" default="/api/sport/request"/>
+  <arg name="pathFollowerGoalTopic" default="/way_point"/>
 
   <node pkg="local_planner" exec="localPlanner" name="localPlanner" output="screen">
     <param name="pathFolder" value="$(find-pkg-share local_planner)/paths" />
-    <param name="vehicleLength" value="0.3" />
-    <param name="vehicleWidth" value="0.7" />
+    <param name="vehicleLength" value="$(var vehicleLength)" />
+    <param name="vehicleWidth" value="$(var vehicleWidth)" />
+    <param name="collisionMeasurementMargin" value="$(var collisionMeasurementMargin)"/>
+    <param name="collisionTrackingMargin" value="$(var collisionTrackingMargin)"/>
     <param name="sensorOffsetX" value="$(var sensorOffsetX)" />
     <param name="sensorOffsetY" value="$(var sensorOffsetY)" />
     <param name="twoWayDrive" value="$(var twoWayDrive)" />
-    <param name="laserVoxelSize" value="0.05" />
-    <param name="terrainVoxelSize" value="0.2" />
+    <param name="terrainVoxelSize" value="0.02" />
     <param name="useTerrainAnalysis" value="true" />
     <param name="checkObstacle" value="true" />
-    <param name="checkRotObstacle" value="false" />
+    <param name="checkRotObstacle" value="true" />
     <param name="adjacentRange" value="3.0" />
-    <param name="obstacleHeightThre" value="0.3" />
-    <param name="groundHeightThre" value="0.1" />
+    <param name="obstacleHeightThre" value="0.10" />
+    <param name="groundHeightThre" value="0.05" />
     <param name="costHeightThre" value="0.1" />
     <param name="costScore" value="0.02" />
     <param name="useCost" value="false" />
-    <param name="pointPerPathThre" value="2" />
     <param name="minRelZ" value="-0.5" />
     <param name="maxRelZ" value="0.25" />
     <param name="maxSpeed" value="$(var maxSpeed)" />
@@ -56,6 +63,18 @@
   </node>
 
   <node pkg="local_planner" exec="pathFollower" name="pathFollower" output="screen">
+    <param name="vehicleLength" value="$(var vehicleLength)"/>
+    <param name="vehicleWidth" value="$(var vehicleWidth)"/>
+    <param name="collisionMeasurementMargin" value="$(var collisionMeasurementMargin)"/>
+    <param name="collisionTrackingMargin" value="$(var collisionTrackingMargin)"/>
+    <param name="checkObstacle" value="true"/>
+    <param name="checkRotObstacle" value="true"/>
+    <param name="collisionReactionTime" value="0.2"/>
+    <param name="collisionDeceleration" value="0.8"/>
+    <param name="collisionAngularDeceleration" value="1.0"/>
+    <param name="collisionCloudTimeout" value="0.5"/>
+    <remap from="/api/sport/request" to="$(var sport_request_topic)"/>
+    <remap from="/way_point" to="$(var pathFollowerGoalTopic)"/>
     <param name="sensorOffsetX" value="$(var sensorOffsetX)" />
     <param name="sensorOffsetY" value="$(var sensorOffsetY)" />
     <param name="pubSkipNum" value="1" />
@@ -88,6 +107,13 @@
     <param name="joyToSpeedDelay" value="$(var joyToSpeedDelay)" />
     <param name="goalCloseDis" value="$(var goalCloseDis)"/>
     <param name="is_real_robot" value="$(var is_real_robot)"/>
+    <param name="maxWaypointSpeed" value="0.35"/>
+    <param name="maxWaypointYawRate" value="0.5"/>
+    <param name="waypointProgressTimeout" value="20.0"/>
+    <param name="waypointProgressDistance" value="0.1"/>
+    <param name="odomTimeout" value="0.5"/>
+    <param name="pathTimeout" value="1.0"/>
+    <param name="go2CommandPeriod" value="0.1"/>
   </node>
 
   <node pkg="tf2_ros" exec="static_transform_publisher" name="vehicleTransPublisher" args="-$(var sensorOffsetX) -$(var sensorOffsetY) 0 0 0 0 /sensor /vehicle"/>

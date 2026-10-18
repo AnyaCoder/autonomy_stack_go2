@@ -18,6 +18,7 @@
   </node>
 
   <include file="$(find-pkg-share local_planner)/launch/local_planner.launch" >
+    <arg name="is_real_robot" value="false" />
     <arg name="sensorOffsetX" value="$(var sensorOffsetX)" />
     <arg name="sensorOffsetY" value="$(var sensorOffsetY)" />
     <arg name="cameraOffsetZ" value="$(var cameraOffsetZ)"/>

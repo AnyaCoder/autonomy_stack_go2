@@ -8,6 +8,7 @@
   <arg name="vehicleY" default="0.0"/>
   <arg name="checkTerrainConn" default="true"/>
   <arg name="is_real_robot" default="true"/>
+  <arg name="sport_request_topic" default="/api/sport/request"/>
 
   <node pkg="joy" exec="joy_node" name="ps3_joy" output="screen" >
     <param name="dev" value="/dev/input/js0" />
@@ -21,10 +22,13 @@
 
   <include file="$(find-pkg-share point_lio_unilidar)/launch/mapping_utlidar.launch">
     <arg name="rviz" value="false"/>
+    <arg name="pcd_save_en" value="false"/>
     <arg name="publish_odometry_without_downsample" value="false"/>
   </include>
 
   <include file="$(find-pkg-share local_planner)/launch/local_planner.launch" >
+    <arg name="sport_request_topic" value="$(var sport_request_topic)"/>
+    <arg name="pathFollowerGoalTopic" value="/goal_point"/>
     <arg name="sensorOffsetX" value="$(var sensorOffsetX)" />
     <arg name="sensorOffsetY" value="$(var sensorOffsetY)" />
     <arg name="cameraOffsetZ" value="$(var cameraOffsetZ)"/>
