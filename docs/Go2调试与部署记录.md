@@ -30,11 +30,11 @@ Go2 用 EDU 版，主机上跑 ROS 2 Foxy，工作区在 `~/autonomy_stack_go2`�
 最直接的无线方式是电脑加入 Go2 的 `Go2-Explore` 热点。Go2 是 `192.168.76.1`，电脑设为 `192.168.76.2/24`，不设默认网关。这个热点不提供互联网。运行：
 
 ```bash
-GO2_FORCE_WIFI=1 ./go2.sh connect
-GO2_FORCE_WIFI=1 ./go2.sh check
+GO2_NETWORK_MODE=wifi ./go2.sh connect
+GO2_NETWORK_MODE=wifi ./go2.sh check
 ```
 
-这里 `GO2_FORCE_WIFI=1` 的作用是让 CycloneDDS 明确走 Wi-Fi；即使网线还插着，也不会误走有线接口。网络能 ping 通只代表 IP 通，最后还是要看电脑能不能实际收到 ROS 话题样本。
+默认 Wi-Fi 网卡是 AIC USB 网卡 `wlx688fc9003c5d`，NetworkManager 配置名为 `Go2-Explore-AIC`。`GO2_NETWORK_MODE=wifi` 会让 CycloneDDS 明确绑定这张网卡，即使网线还插着也不会误走有线；`wired` 强制走网线，默认 `auto` 有线优先、无线回退。旧变量 `GO2_FORCE_WIFI=1` 仍兼容。需要换网卡或连接配置时，可通过 `GO2_WIFI_INTERFACE` 和 `GO2_WIFI_CONNECTION` 覆盖默认值。网络能 ping 通只代表 IP 通，最后还是要看电脑能不能实际收到 ROS 话题样本。
 
 ## `~/go2-wireless` 是怎么搭的
 
@@ -58,7 +58,7 @@ journalctl --user-unit=go2-wifi-relay -f
 
 ## IMU 校准和 SLAM
 
-L1 的 IMU 校准是通过 ROS 2 节点完成的。开始前脚本会确认 `/utlidar/imu` 数据发布正常，也会检查狗端能看到 `/api/sport/request` 订阅者。标定大约 37 秒：开始时让狗调整姿态，静止采集偏置，然后原地旋转约 20 秒，最后把结果写到桌面的 `~/Desktop/imu_calib_data.yaml`。如果已有旧文件，脚本会先备份。
+L1 的 IMU 校准是通过 ROS 2 节点完成的。开始前脚本会确认 `/utlidar/imu` 数据发布正常，并检查所选链路上的 Sport 请求订阅端：有线检查 `/api/sport/request`，无线检查 `/go2/wifi/sport/request` relay。无线运行时，标定节点的请求 remap 到专用 relay 入口，再单向转发至狗端原生 Sport API。标定大约 37 秒：开始时让狗调整姿态，静止采集偏置，然后原地旋转约 20 秒，最后把结果写到桌面的 `~/Desktop/imu_calib_data.yaml`。如果已有旧文件，脚本会先备份。启动命令为 `GO2_NETWORK_MODE=wifi ./go2.sh calibrate-imu`；该路径目前完成代码接线，仍需狗开机后做实机验证。
 
 实际操作时运行：
 

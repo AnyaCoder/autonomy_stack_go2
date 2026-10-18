@@ -1,0 +1,4 @@
+[Unit]
+Description=Go2 Wi-Fi ROS 2 and native DDS relay stack
+Wants=network-online.target go2-wifi-relay.service go2-wifi-relay-wifi.service go2-wifi-graph-announcer.service
+After=network-online.target

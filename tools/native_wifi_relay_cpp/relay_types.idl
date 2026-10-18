@@ -1,0 +1,59 @@
+module builtin_interfaces {
+  module msg {
+    module dds_ {
+      @final @autoid(SEQUENTIAL)
+      struct Time_ { long sec; unsigned long nanosec; };
+    };
+  };
+};
+
+module std_msgs {
+  module msg {
+    module dds_ {
+      @final @autoid(SEQUENTIAL)
+      struct Header_ { builtin_interfaces::msg::dds_::Time_ stamp; string frame_id; };
+    };
+  };
+};
+
+module geometry_msgs {
+  module msg {
+    module dds_ {
+      @final @autoid(SEQUENTIAL)
+      struct Quaternion_ { double x; double y; double z; double w; };
+      @final @autoid(SEQUENTIAL)
+      struct Vector3_ { double x; double y; double z; };
+    };
+  };
+};
+
+module sensor_msgs {
+  module msg {
+    module dds_ {
+      @final @autoid(SEQUENTIAL)
+      struct PointField_ { string name; unsigned long offset; octet datatype; unsigned long count; };
+      @topic @final @autoid(SEQUENTIAL)
+      struct PointCloud2_ {
+        std_msgs::msg::dds_::Header_ header;
+        unsigned long height;
+        unsigned long width;
+        sequence<PointField_> fields;
+        boolean is_bigendian;
+        unsigned long point_step;
+        unsigned long row_step;
+        sequence<octet> data;
+        boolean is_dense;
+      };
+      @topic @final @autoid(SEQUENTIAL)
+      struct Imu_ {
+        std_msgs::msg::dds_::Header_ header;
+        geometry_msgs::msg::dds_::Quaternion_ orientation;
+        double orientation_covariance[9];
+        geometry_msgs::msg::dds_::Vector3_ angular_velocity;
+        double angular_velocity_covariance[9];
+        geometry_msgs::msg::dds_::Vector3_ linear_acceleration;
+        double linear_acceleration_covariance[9];
+      };
+    };
+  };
+};

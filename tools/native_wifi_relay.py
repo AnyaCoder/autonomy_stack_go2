@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Relay Go2 sensor DDS topics to wlan0."""
+"""Relay sensors to wlan0 and dedicated Wi-Fi requests to the Sport API."""
 import argparse
 from collections import OrderedDict
 from dataclasses import dataclass
@@ -24,7 +24,8 @@ from cyclonedds.util import duration
 from unitree_sdk2py.idl.std_msgs.msg.dds_ import Header_
 from unitree_sdk2py.idl.geometry_msgs.msg.dds_ import Quaternion_, Vector3_
 from unitree_sdk2py.idl.sensor_msgs.msg.dds_ import PointCloud2_
-from unitree_sdk2py.idl.unitree_go.msg.dds_ import SportModeState_
+from unitree_sdk2py.idl.unitree_go.msg.dds_ import LowState_, SportModeState_
+from unitree_sdk2py.idl.unitree_api.msg.dds_ import Request_
 
 
 @dataclass
@@ -44,8 +45,11 @@ TOPICS = (
     ('rt/utlidar/imu', Imu_),
     ('rt/utlidar/cloud', PointCloud2_),
     ('rt/sportmodestate', SportModeState_),
+    ('rt/lowstate', LowState_),
 )
 STATUS = Path.home() / '.cache/go2-wifi-relay'
+WIFI_REQUEST_TOPIC = 'rt/go2/wifi/sport/request'
+SPORT_REQUEST_TOPIC = 'rt/api/sport/request'
 
 
 def participant(interface):
@@ -131,17 +135,26 @@ def receive(stop, queues, interface='eth0', seconds=0):
 
 def transmit(stop, queues, indices, role):
     domain, node = participant('wlan0')
-    qos = Qos(Policy.Reliability.Reliable(duration(milliseconds=100)),
-              Policy.History.KeepLast(2))
-    writers = {idx: DataWriter(node, Topic(node, *TOPICS[idx]), qos)
-               for idx in indices}
+    # Point clouds are large sensor samples.  Reliable delivery lets a lost
+    # fragment hold the writer's small history and turns the stream into an
+    # ever older backlog on a busy 2.4 GHz link.  Keep only the newest cloud;
+    # control/state topics retain reliable delivery.
+    reliable_qos = Qos(Policy.Reliability.Reliable(duration(milliseconds=100)),
+                        Policy.History.KeepLast(8))
+    cloud_qos = Qos(Policy.Reliability.BestEffort,
+                    Policy.History.KeepLast(1))
+    writers = {
+        idx: DataWriter(node, Topic(node, *TOPICS[idx]),
+                        cloud_qos if idx == 1 else reliable_qos)
+        for idx in indices
+    }
     counts = {TOPICS[idx][0]: 0 for idx in indices}
     byte_counts = {TOPICS[idx][0]: 0 for idx in indices}
     next_report = 0
     while not stop.is_set():
         did_work = False
         for idx, writer in writers.items():
-            for _ in range(16 if idx != 1 else 4):
+            for _ in range(16 if idx != 1 else 1):
                 try:
                     payload = queues[idx].get_nowait()
                 except queue.Empty:
@@ -155,6 +168,63 @@ def transmit(stop, queues, indices, role):
             report(role, counts, {'interface': 'wlan0', 'bytes': byte_counts})
             next_report = time.monotonic() + 5
         stop.wait(.0005 if did_work else .002)
+
+
+def receive_requests(stop, requests):
+    requests.cancel_join_thread()
+    domain, node = participant('wlan0')
+    qos = Qos(Policy.Reliability.Reliable(duration(milliseconds=100)),
+              Policy.History.KeepLast(4))
+    # Never subscribe to the native Sport topic on wlan0: the robot's own
+    # requests may be visible there and must not be injected back into eth0.
+    reader = DataReader(node, Topic(node, WIFI_REQUEST_TOPIC, Request_), qos)
+    counts = {'received': 0, 'queue_drops': 0}
+    next_report = 0
+    while not stop.is_set():
+        for sample in reader.take(16):
+            if not getattr(sample.sample_info, 'valid_data', False):
+                continue
+            counts['received'] += 1
+            payload = (time.monotonic(), sample.serialize())
+            try:
+                requests.put_nowait(payload)
+            except queue.Full:
+                counts['queue_drops'] += 1
+                try:
+                    requests.get_nowait()
+                except queue.Empty:
+                    pass
+                try:
+                    requests.put_nowait(payload)
+                except queue.Full:
+                    counts['queue_drops'] += 1
+        if time.monotonic() >= next_report:
+            report('wifi_requests', counts, {'topic': WIFI_REQUEST_TOPIC})
+            next_report = time.monotonic() + 5
+        stop.wait(.002)
+
+
+def transmit_requests(stop, requests):
+    domain, node = participant('eth0')
+    qos = Qos(Policy.Reliability.Reliable(duration(milliseconds=100)),
+              Policy.History.KeepLast(4))
+    writer = DataWriter(node, Topic(node, SPORT_REQUEST_TOPIC, Request_), qos)
+    counts = {'forwarded': 0, 'expired': 0}
+    next_report = 0
+    while not stop.is_set():
+        try:
+            received_at, payload = requests.get(timeout=.02)
+        except queue.Empty:
+            pass
+        else:
+            if time.monotonic() - received_at > .3:
+                counts['expired'] += 1
+            else:
+                writer.write(Request_.deserialize(payload))
+                counts['forwarded'] += 1
+        if time.monotonic() >= next_report:
+            report('sport_requests', counts, {'topic': SPORT_REQUEST_TOPIC})
+            next_report = time.monotonic() + 5
 
 
 def main():
@@ -174,11 +244,14 @@ def main():
         return
     queues = [ctx.Queue(maxsize=4 if idx == 1 else 32)
               for idx in range(len(TOPICS))]
+    requests = ctx.Queue(maxsize=4)
     children = [ctx.Process(target=transmit,
-                            args=(stop, queues, (0, 2), 'wifi_imu_state')),
+                            args=(stop, queues, (0, 2, 3), 'wifi_imu_state')),
                 ctx.Process(target=transmit,
                             args=(stop, queues, (1,), 'wifi_cloud')),
-                ctx.Process(target=receive, args=(stop, queues))]
+                ctx.Process(target=receive, args=(stop, queues)),
+                ctx.Process(target=receive_requests, args=(stop, requests)),
+                ctx.Process(target=transmit_requests, args=(stop, requests))]
     try:
         for child in children:
             child.start()
@@ -198,7 +271,7 @@ def main():
             if child.is_alive():
                 child.kill()
                 child.join()
-        for item in queues:
+        for item in queues + [requests]:
             item.cancel_join_thread()
             item.close()
 

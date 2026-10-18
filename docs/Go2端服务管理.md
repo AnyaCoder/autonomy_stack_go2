@@ -6,7 +6,7 @@ Go2 的自定义运行文件集中在 `~/go2`。systemd 用户服务定义保留
 
 | 分组 | 服务 | 用途 |
 |---|---|---|
-| `wireless` | `go2-wifi-relay` | Go2 传感器无线 DDS 中继；运动请求转发因回环故障暂停 |
+| `wireless` | `go2-wifi-stack.target` | 统一管理 C++ DDS 中继和 ROS graph announcer；传感器/状态下行、专用 Sport 请求上行 |
 | `sensors` | `go2-sensors` | L1 点云/里程计转 ROS 2 |
 | `sensors` | `go2-front-camera` | 机头相机只读图像服务 |
 | `sensors` | `go2-lowstate` | 关节与 IMU 只读状态服务 |
@@ -22,6 +22,6 @@ Go2 的自定义运行文件集中在 `~/go2`。systemd 用户服务定义保留
 ~/go2/go2-services.sh logs wireless
 ```
 
-支持 `status`、`start`、`stop`、`restart`、`enable`、`disable` 和 `logs`，分组为 `all`、`wireless`、`sensors`。`go2-slam-inputs` 已停用并清理，不属于当前服务集。
+支持 `status`、`start`、`stop`、`restart`、`enable`、`disable` 和 `logs`，分组为 `all`、`wireless`、`sensors`。无线分组通过 `go2-wifi-stack.target` 同时管理有线源端 relay、Wi-Fi 出口 relay 和 ROS graph announcer。`go2-slam-inputs` 已停用并清理，不属于当前服务集。
 
 服务定义引用的实现和配置位于 `~/go2/services/voxel_ws`；DDS runtime、Unitree Python SDK 和无线 relay 分别位于 `~/go2/runtime`、`~/go2/vendor`、`~/go2/relay`。地图保存在 `~/go2/data`，迁移备份和诊断数据保存在 `~/go2/archive`。

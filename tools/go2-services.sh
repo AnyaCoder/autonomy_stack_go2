@@ -7,7 +7,7 @@ Usage: go2-services.sh [status|start|stop|restart|enable|disable|logs] [all|wire
 
 Groups:
   all       All seven Go2 user services (default)
-  wireless  DDS relay only
+  wireless  native DDS relay and ROS graph announcer as one stack
   sensors   Lidar observer, front camera, lowstate, RealSense, preview, and laserscan
 EOF
 }
@@ -18,7 +18,7 @@ group="${2:-all}"
 case "$group" in
     all)
         units=(
-            go2-wifi-relay.service
+            go2-wifi-stack.target
             go2-sensors.service
             go2-front-camera.service
             go2-lowstate.service
@@ -28,7 +28,7 @@ case "$group" in
         )
         ;;
     wireless)
-        units=(go2-wifi-relay.service)
+        units=(go2-wifi-stack.target)
         ;;
     sensors)
         units=(
@@ -57,7 +57,11 @@ case "$action" in
     logs)
         log_args=()
         for unit in "${units[@]}"; do
-            log_args+=(--unit "$unit")
+            if [[ "$unit" == go2-wifi-stack.target ]]; then
+                log_args+=(--unit go2-wifi-relay.service --unit go2-wifi-relay-wifi.service --unit go2-wifi-graph-announcer.service)
+            else
+                log_args+=(--unit "$unit")
+            fi
         done
         journalctl --user --no-pager --lines=80 "${log_args[@]}"
         ;;

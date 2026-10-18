@@ -1,0 +1,69 @@
+module unitree_go {
+  module msg {
+    module dds_ {
+      @final @autoid(SEQUENTIAL)
+      struct TimeSpec_ { long sec; unsigned long nanosec; };
+      @final @autoid(SEQUENTIAL)
+      struct IMUState_ {
+        float quaternion[4]; float gyroscope[3]; float accelerometer[3];
+        float rpy[3]; octet temperature;
+      };
+      @final @autoid(SEQUENTIAL)
+      struct MotorState_ {
+        octet mode; float q; float dq; float ddq; float tau_est;
+        float q_raw; float dq_raw; float ddq_raw; octet temperature;
+        unsigned long lost; unsigned long reserve[2];
+      };
+      @final @autoid(SEQUENTIAL)
+      struct BmsState_ {
+        octet version_high; octet version_low; octet status; octet soc;
+        long current; unsigned short cycle; octet bq_ntc[2]; octet mcu_ntc[2];
+        unsigned short cell_vol[15];
+      };
+      @final @autoid(SEQUENTIAL)
+      struct PathPoint_ {
+        float t_from_start; float x; float y; float yaw;
+        float vx; float vy; float vyaw;
+      };
+      @topic @final @autoid(SEQUENTIAL)
+      struct SportModeState_ {
+        TimeSpec_ stamp; unsigned long error_code; IMUState_ imu_state;
+        octet mode; float progress; octet gait_type; float foot_raise_height;
+        float position[3]; float body_height; float velocity[3]; float yaw_speed;
+        float range_obstacle[4]; short foot_force[4]; float foot_position_body[12];
+        float foot_speed_body[12]; PathPoint_ path_point[10];
+      };
+      @topic @final @autoid(SEQUENTIAL)
+      struct LowState_ {
+        octet head[2]; octet level_flag; octet frame_reserve;
+        unsigned long sn[2]; unsigned long version[2]; unsigned short bandwidth;
+        IMUState_ imu_state; MotorState_ motor_state[20]; BmsState_ bms_state;
+        short foot_force[4]; short foot_force_est[4]; unsigned long tick;
+        octet wireless_remote[40]; octet bit_flag; float adc_reel;
+        octet temperature_ntc1; octet temperature_ntc2; float power_v; float power_a;
+        unsigned short fan_frequency[4]; unsigned long reserve; unsigned long crc;
+      };
+    };
+  };
+};
+
+module unitree_api {
+  module msg {
+    module dds_ {
+      @final @autoid(SEQUENTIAL)
+      struct RequestIdentity_ { long long id; long long api_id; };
+      @final @autoid(SEQUENTIAL)
+      struct RequestLease_ { long long id; };
+      @final @autoid(SEQUENTIAL)
+      struct RequestPolicy_ { long priority; boolean noreply; };
+      @final @autoid(SEQUENTIAL)
+      struct RequestHeader_ {
+        RequestIdentity_ identity; RequestLease_ lease; RequestPolicy_ policy;
+      };
+      @topic @final @autoid(SEQUENTIAL)
+      struct Request_ {
+        RequestHeader_ header; string parameter; sequence<octet> binary;
+      };
+    };
+  };
+};

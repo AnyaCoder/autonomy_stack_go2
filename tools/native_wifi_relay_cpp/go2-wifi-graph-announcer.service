@@ -1,0 +1,16 @@
+[Unit]
+Description=Go2 ROS graph announcer for native Wi-Fi DDS relay
+After=network-online.target
+PartOf=go2-wifi-stack.target
+
+[Service]
+Type=simple
+Environment=ROS_DOMAIN_ID=0
+Environment=RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+Environment=FASTRTPS_DEFAULT_PROFILES_FILE=/home/unitree/go2/relay/graph_announcer_fastdds.xml
+ExecStart=/bin/bash -lc 'source /opt/ros/foxy/setup.bash && source /home/unitree/ws/install/setup.bash && exec /home/unitree/go2/relay/graph_announcer_src/install/lib/go2_wifi_graph_announcer/go2_wifi_graph_announcer'
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=go2-wifi-stack.target

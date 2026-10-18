@@ -1,0 +1,17 @@
+[Unit]
+Description=Go2 native C++ DDS Wi-Fi egress relay (local DDS to wlan0)
+After=network-online.target go2-wifi-relay.service
+PartOf=go2-wifi-stack.target
+
+[Service]
+Type=simple
+Environment=CYCLONEDDS_HOME=/home/unitree/go2/runtime/dds-0.10.2/install
+Environment=LD_LIBRARY_PATH=/home/unitree/go2/runtime/dds-0.10.2/install/lib
+ExecStart=/home/unitree/go2/relay/native_wifi_relay_cpp --wifi
+Restart=on-failure
+RestartSec=5
+KillMode=mixed
+TimeoutStopSec=15
+
+[Install]
+WantedBy=go2-wifi-stack.target
