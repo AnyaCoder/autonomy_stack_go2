@@ -168,9 +168,9 @@ class TcpServer(Node):
 
     def unregister_node(self, old_node):
         if old_node is not None:
-            old_node.unregister()
             if self.executor is not None:
                 self.executor.remove_node(old_node)
+            old_node.unregister()
 
     def destroy_nodes(self):
         """
@@ -210,6 +210,8 @@ class SysCommands:
 
         old_node = self.tcp_server.subscribers_table.get(topic)
         if old_node is not None:
+            if old_node.msg == message_class:
+                return
             self.tcp_server.unregister_node(old_node)
 
         new_subscriber = RosSubscriber(topic, message_class, self.tcp_server)
@@ -237,6 +239,8 @@ class SysCommands:
 
         old_node = self.tcp_server.publishers_table.get(topic)
         if old_node is not None:
+            if type(old_node.msg) == message_class:
+                return
             self.tcp_server.unregister_node(old_node)
 
         new_publisher = RosPublisher(topic, message_class, queue_size=queue_size, latch=latch)

@@ -32,8 +32,10 @@ def main():
     if args.use_imu_as_input:
         label += '_imu_input'
     # Domain and transport overrides are intentional: keep this replay local.
-    os.environ['ROS_DOMAIN_ID']='179' if args.baseline else '180'
-    os.environ['CYCLONEDDS_URI']='<CycloneDDS><Domain><General><Interfaces><NetworkInterface name="lo" /></Interfaces></General></Domain></CycloneDDS>'
+    os.environ['ROS_DOMAIN_ID']='91'
+    os.environ['ROS_LOCALHOST_ONLY']='0'
+    os.environ['RMW_IMPLEMENTATION']='rmw_cyclonedds_cpp'
+    os.environ['CYCLONEDDS_URI']='<CycloneDDS><Domain><General><Interfaces><NetworkInterface name="lo" multicast="true" /></Interfaces></General></Domain></CycloneDDS>'
     data=np.load(args.session/'data.npz')
     metadata=json.loads((args.session/'metadata.json').read_text())
     rclpy.init();node=rclpy.create_node('extrinsics_replay_check')

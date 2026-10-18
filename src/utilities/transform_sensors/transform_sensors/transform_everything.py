@@ -1,12 +1,26 @@
 #!/usr/bin/env python
+# Copyright 2026 The Go2 Autonomy Stack contributors
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+import copy
 import rclpy
 from rclpy.node import Node
 from rclpy.time import Time
 from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import Imu
-from sensor_msgs.msg import PointCloud2
+from sensor_msgs.msg import PointCloud2, PointField
 from geometry_msgs.msg import TransformStamped, Vector3
-import sensor_msgs_py.point_cloud2 as pc2
 import tf_transformations
 
 from transforms3d.quaternions import quat2mat
@@ -17,14 +31,85 @@ import yaml
 
 import os
 
+
+POINT_FIELD_DTYPES = {
+    PointField.INT8: np.int8,
+    PointField.UINT8: np.uint8,
+    PointField.INT16: np.int16,
+    PointField.UINT16: np.uint16,
+    PointField.INT32: np.int32,
+    PointField.UINT32: np.uint32,
+    PointField.FLOAT32: np.float32,
+    PointField.FLOAT64: np.float64,
+}
+
+
+def transform_cloud(data, rotation, translation, cam_offset, filter_bounds,
+                    time_stamp_offset):
+    if data.width == 0 or data.height == 0:
+        return None
+
+    names, formats, offsets = [], [], []
+    byte_order = '>' if data.is_bigendian else '<'
+    for field in data.fields:
+        names.append(field.name)
+        field_dtype = np.dtype(POINT_FIELD_DTYPES[field.datatype]).newbyteorder(
+            byte_order)
+        formats.append(
+            field_dtype if field.count == 1 else (field_dtype, (field.count,)))
+        offsets.append(field.offset)
+    dtype = np.dtype({
+        'names': names,
+        'formats': formats,
+        'offsets': offsets,
+        'itemsize': data.point_step,
+    })
+    points = np.ndarray(
+        shape=(data.height, data.width), dtype=dtype, buffer=data.data,
+        strides=(data.row_step, data.point_step)).reshape(-1)
+    if not all(name in points.dtype.names for name in ('x', 'y', 'z')):
+        raise ValueError('PointCloud2 must contain x, y, and z fields')
+
+    xyz = np.column_stack((points['x'], points['y'], points['z']))
+    transformed_xyz = xyz @ rotation.T + translation
+    transformed_xyz[:, 2] -= cam_offset
+    x_min, x_max, y_min, y_max, z_min, z_max = filter_bounds
+    inside_filter_box = (
+        (transformed_xyz[:, 0] > x_min) & (transformed_xyz[:, 0] < x_max) &
+        (transformed_xyz[:, 1] > y_min) & (transformed_xyz[:, 1] < y_max) &
+        (transformed_xyz[:, 2] > z_min) & (transformed_xyz[:, 2] < z_max))
+    keep = ~inside_filter_box
+    transformed_points = points[keep].copy()
+    transformed_points['x'] = transformed_xyz[keep, 0]
+    transformed_points['y'] = transformed_xyz[keep, 1]
+    transformed_points['z'] = transformed_xyz[keep, 2]
+
+    elevated_cloud = PointCloud2()
+    elevated_cloud.header = copy.deepcopy(data.header)
+    elevated_cloud.height = 1
+    elevated_cloud.width = len(transformed_points)
+    elevated_cloud.fields = data.fields
+    elevated_cloud.is_bigendian = data.is_bigendian
+    elevated_cloud.point_step = data.point_step
+    elevated_cloud.row_step = data.point_step * len(transformed_points)
+    elevated_cloud.data = transformed_points.tobytes()
+    elevated_cloud.is_dense = data.is_dense
+    elevated_cloud.header.stamp = Time(
+        nanoseconds=Time.from_msg(data.header.stamp).nanoseconds +
+        time_stamp_offset).to_msg()
+    elevated_cloud.header.frame_id = 'body'
+    return elevated_cloud
+
+
 class Repuber(Node):
     def __init__(self):
         super().__init__('sensor_transformer')
         self.imu_sub = self.create_subscription(
             Imu, '/utlidar/imu', self.imu_callback, qos_profile_sensor_data)
         self.cloud_sub = self.create_subscription(
-            PointCloud2, '/utlidar/cloud', self.cloud_callback, qos_profile_sensor_data)
-        
+            PointCloud2, '/utlidar/cloud', self.cloud_callback,
+            qos_profile_sensor_data)
+
         self.imu_raw_pub = self.create_publisher(Imu, '/utlidar/transformed_raw_imu', 50)
         self.imu_pub = self.create_publisher(Imu, '/utlidar/transformed_imu', 50)
         self.cloud_pub = self.create_publisher(PointCloud2, '/utlidar/transformed_cloud', 50)
@@ -32,7 +117,7 @@ class Repuber(Node):
         self.time_stamp_offset = 0
         self.time_stamp_offset_set = False
         self.pending_imu = deque(maxlen=256)
-        
+
         self.cam_offset = 0.046825
 
         # Load calibration data
@@ -53,7 +138,7 @@ class Repuber(Node):
             print("imu_calib.yaml loaded")
         except FileNotFoundError:
             print("imu_calib.yaml not found, using default values")
-            
+
         self.acc_bias_x = calib_data['acc_bias_x']
         self.acc_bias_y = calib_data['acc_bias_y']
         self.acc_bias_z = calib_data['acc_bias_z']
@@ -62,7 +147,7 @@ class Repuber(Node):
         self.ang_bias_z = calib_data['ang_bias_z']
         self.ang_z2x_proj = calib_data['ang_z2x_proj']
         self.ang_z2y_proj = calib_data['ang_z2y_proj']
-                
+
         self.body2cloud_trans = TransformStamped()
         self.body2cloud_trans.header.stamp = self.get_clock().now().to_msg()
         self.body2cloud_trans.header.frame_id = "body"
@@ -75,7 +160,7 @@ class Repuber(Node):
         self.body2cloud_trans.transform.rotation.y = quat[1]
         self.body2cloud_trans.transform.rotation.z = quat[2]
         self.body2cloud_trans.transform.rotation.w = quat[3]
-        
+
         self.body2imu_trans = TransformStamped()
         self.body2imu_trans.header.stamp = self.get_clock().now().to_msg()
         self.body2imu_trans.header.frame_id = "body"
@@ -115,7 +200,7 @@ class Repuber(Node):
             self.get_logger().info('Loaded calibrated L1 rotations: ' + extrinsics_file)
             self.get_logger().info(
                 'Gyro rotation is calibrated; accelerometer extrinsics are unvalidated')
-        
+
         self.x_filter_min = -0.7
         self.x_filter_max = -0.1
         self.y_filter_min = -0.3
@@ -123,46 +208,31 @@ class Repuber(Node):
         self.z_filter_min = -0.6 - self.cam_offset
         self.z_filter_max = 0 - self.cam_offset
 
-                
     def cloud_callback(self, data):
         if not self.time_stamp_offset_set:
-            self.time_stamp_offset = self.get_clock().now().nanoseconds - Time.from_msg(data.header.stamp).nanoseconds
+            self.time_stamp_offset = (
+                self.get_clock().now().nanoseconds -
+                Time.from_msg(data.header.stamp).nanoseconds)
             self.time_stamp_offset_set = True
             while self.pending_imu:
                 self.publish_calibrated_gyro_imu(self.pending_imu.popleft())
-                
-        points = np.asarray(pc2.read_points_list(data))
-        if not len(points):
-            return
 
         transform = self.body2cloud_trans.transform
-        mat = quat2mat(np.array([transform.rotation.w, transform.rotation.x, transform.rotation.y, transform.rotation.z]))
-        translation = np.array([transform.translation.x, transform.translation.y, transform.translation.z])
-        
-        transformed_points = points
-        transformed_points[:, 0:3] = points[:, 0:3] @ mat.T + translation
-        transformed_points[:, 2] -= self.cam_offset
-        inside_filter_box = (
-            (transformed_points[:, 0] > self.x_filter_min) &
-            (transformed_points[:, 0] < self.x_filter_max) &
-            (transformed_points[:, 1] > self.y_filter_min) &
-            (transformed_points[:, 1] < self.y_filter_max) &
-            (transformed_points[:, 2] > self.z_filter_min) &
-            (transformed_points[:, 2] < self.z_filter_max))
-        transformed_points = transformed_points[~inside_filter_box].tolist()
-        ring_index = next((i for i, field in enumerate(data.fields)
-                           if field.name == 'ring'), None)
-        if ring_index is not None:
-            for point in transformed_points:
-                point[ring_index] = int(point[ring_index])
-        
-        elevated_cloud = pc2.create_cloud(data.header, data.fields, transformed_points)
-        elevated_cloud.header.stamp = Time(nanoseconds=Time.from_msg(elevated_cloud.header.stamp).nanoseconds + self.time_stamp_offset).to_msg()
-        elevated_cloud.header.frame_id = "body"
-        elevated_cloud.is_dense = data.is_dense
+        mat = quat2mat(np.array([
+            transform.rotation.w, transform.rotation.x,
+            transform.rotation.y, transform.rotation.z]))
+        translation = np.array([
+            transform.translation.x, transform.translation.y,
+            transform.translation.z])
+        elevated_cloud = transform_cloud(
+            data, mat, translation, self.cam_offset,
+            (self.x_filter_min, self.x_filter_max,
+             self.y_filter_min, self.y_filter_max,
+             self.z_filter_min, self.z_filter_max),
+            self.time_stamp_offset)
+        if elevated_cloud is not None:
+            self.cloud_pub.publish(elevated_cloud)
 
-        self.cloud_pub.publish(elevated_cloud)
-            
     def publish_calibrated_gyro_imu(self, data):
         gyro = self.gyro_rotation @ (np.array([
             data.angular_velocity.x, data.angular_velocity.y,
@@ -177,8 +247,9 @@ class Repuber(Node):
             np.sin(theta) * acc_x + np.cos(theta) * acc_z - self.acc_bias_z,
         ])
         transformed_imu = Imu()
-        transformed_imu.header.stamp = Time(nanoseconds=
-            Time.from_msg(data.header.stamp).nanoseconds + self.time_stamp_offset).to_msg()
+        transformed_imu.header.stamp = Time(
+            nanoseconds=Time.from_msg(data.header.stamp).nanoseconds +
+            self.time_stamp_offset).to_msg()
         transformed_imu.header.frame_id = 'body'
         transformed_imu.angular_velocity.x = float(gyro[0])
         transformed_imu.angular_velocity.y = float(gyro[1])
@@ -206,19 +277,21 @@ class Repuber(Node):
         trans[0] = self.body2imu_trans.transform.translation.x
         trans[1] = self.body2imu_trans.transform.translation.y
         trans[2] = self.body2imu_trans.transform.translation.z
-        
+
         rot = np.zeros(4)
         rot[0] = self.body2imu_trans.transform.rotation.x
         rot[1] = self.body2imu_trans.transform.rotation.y
         rot[2] = self.body2imu_trans.transform.rotation.z
         rot[3] = self.body2imu_trans.transform.rotation.w
-        
-        transformed_orientation = tf_transformations.quaternion_multiply(rot, [data.orientation.x, data.orientation.y, data.orientation.z, data.orientation.w])
-        
+
+        transformed_orientation = tf_transformations.quaternion_multiply(
+            rot, [data.orientation.x, data.orientation.y,
+                  data.orientation.z, data.orientation.w])
+
         x = data.angular_velocity.x
         y = -data.angular_velocity.y
         z = -data.angular_velocity.z
-        
+
         theta = 15.1 / 180 * 3.1415926
 
         x2 = np.cos(theta) * x - np.sin(theta) * z
@@ -228,22 +301,22 @@ class Repuber(Node):
         x2 -= self.ang_bias_x
         y2 -= self.ang_bias_y
         z2 -= self.ang_bias_z
-        
+
         x_comp_rate = self.ang_z2x_proj
         y_comp_rate = self.ang_z2y_proj
-        
+
         x2 += x_comp_rate * z2
         y2 += y_comp_rate * z2
-        
+
         transformed_angular_velocity = Vector3()
         transformed_angular_velocity.x = x2
         transformed_angular_velocity.y = y2
         transformed_angular_velocity.z = z2
-        
+
         acc_x = data.linear_acceleration.x
         acc_y = -data.linear_acceleration.y
         acc_z = -data.linear_acceleration.z
-        
+
         acc_x2 = np.cos(theta) * acc_x - np.sin(theta) * acc_z
         acc_y2 = acc_y
         acc_z2 = np.sin(theta) * acc_x + np.cos(theta) * acc_z
@@ -251,7 +324,6 @@ class Repuber(Node):
         transformed_linear_acceleration.x = acc_x2 - self.acc_bias_x
         transformed_linear_acceleration.y = acc_y2 - self.acc_bias_y
         transformed_linear_acceleration.z = acc_z2 - self.acc_bias_z
-        
 
         transformed_imu = Imu()
         transformed_imu.header.stamp = data.header.stamp
@@ -262,21 +334,25 @@ class Repuber(Node):
         transformed_imu.orientation.w = transformed_orientation[3]
         transformed_imu.angular_velocity = transformed_angular_velocity
         transformed_imu.linear_acceleration = transformed_linear_acceleration
-        
-        transformed_imu.header.stamp = Time(nanoseconds=Time.from_msg(transformed_imu.header.stamp).nanoseconds + self.time_stamp_offset).to_msg()
-        
+
+        transformed_imu.header.stamp = Time(
+            nanoseconds=Time.from_msg(
+                transformed_imu.header.stamp).nanoseconds +
+            self.time_stamp_offset).to_msg()
+
         self.imu_raw_pub.publish(transformed_imu)
-        
+
         transformed_imu.orientation.x = 0.0
         transformed_imu.orientation.y = 0.0
         transformed_imu.orientation.z = 0.0
         transformed_imu.orientation.w = 1.0
-        
+
         transformed_imu.linear_acceleration.x = 0.0
         transformed_imu.linear_acceleration.y = 0.0
         transformed_imu.linear_acceleration.z = 0.0
-        
+
         self.imu_pub.publish(transformed_imu)
+
 
 def main(args=None):
     rclpy.init(args=args)
@@ -292,6 +368,7 @@ def main(args=None):
             transform_node.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()
+
 
 if __name__ == '__main__':
     main()

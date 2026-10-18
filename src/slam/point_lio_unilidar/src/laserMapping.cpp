@@ -989,7 +989,7 @@ int main(int argc, char **argv)
     /*** ROS subscribe initialization ***/
     
     auto sub_pcl = node->create_subscription<sensor_msgs::msg::PointCloud2>(
-        lid_topic, rclcpp::SensorDataQoS().keep_last(5), standard_pcl_cbk);
+        lid_topic, rclcpp::QoS(rclcpp::KeepLast(5)).reliable(), standard_pcl_cbk);
 
     auto sub_imu = node->create_subscription<sensor_msgs::msg::Imu>(
         imu_topic, rclcpp::SensorDataQoS().keep_last(100), imu_cbk);

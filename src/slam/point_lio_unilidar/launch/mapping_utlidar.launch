@@ -2,6 +2,7 @@
 	<!-- Launch file for Unitree L1 LiDAR mounted on Go2 -->
 	<arg name="rviz" default="true" />
 	<arg name="pcd_dir" default="" />
+	<arg name="pcd_save_en" default="true" />
 	<arg name="publish_odometry_without_downsample" default="false" />
 
 	<node pkg="transform_sensors" exec="transform_everything" name="transform_everything" output="screen">
@@ -26,12 +27,13 @@
 		<param name="filter_size_map" value="0.1" /> <!--0.5, 0.3, 0.15, 0.1-->
 		<param name="cube_side_length" value="1000.0" /> <!--2000-->
 		<param name="runtime_pos_log_enable" value="false" /> <!--1-->
-		<param name="pcd_save.pcd_save_en" value="true" />
+		<param name="pcd_save.pcd_save_en" value="$(var pcd_save_en)" />
 		<param name="pcd_save.interval" value="600" />
 		<param name="pcd_save.output_dir" value="$(var pcd_dir)" />
 
 		<remap from="/cloud_registered" to="/registered_scan" />
 		<remap from="/aft_mapped_to_init" to="/state_estimation" />
+		<remap from="/path" to="/pointlio_trajectory" />
 		
 	</node>
 

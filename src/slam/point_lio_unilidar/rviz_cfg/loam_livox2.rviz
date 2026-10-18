@@ -70,7 +70,7 @@ Visualization Manager:
             Depth: 5
             Durability Policy: Volatile
             History Policy: Keep Last
-            Reliability Policy: Reliable
+            Reliability Policy: Best Effort
             Value: /cloud_registered
           Use Fixed Frame: true
           Use rainbow: true
@@ -100,10 +100,10 @@ Visualization Manager:
           Size (m): 0.009999999776482582
           Style: Points
           Topic:
-            Depth: 10
+            Depth: 2
             Durability Policy: Volatile
             History Policy: Keep Last
-            Reliability Policy: Reliable
+            Reliability Policy: Best Effort
             Value: /registered_scan
           Use Fixed Frame: true
           Use rainbow: true
@@ -136,7 +136,7 @@ Visualization Manager:
             Depth: 5
             Durability Policy: Volatile
             History Policy: Keep Last
-            Reliability Policy: Reliable
+            Reliability Policy: Best Effort
             Value: ""
           Use Fixed Frame: true
           Use rainbow: true
@@ -217,7 +217,7 @@ Visualization Manager:
         Durability Policy: Volatile
         History Policy: Keep Last
         Reliability Policy: Reliable
-        Value: /path
+        Value: /pointlio_trajectory
       Value: false
     - Alpha: 1
       Autocompute Intensity Bounds: false
@@ -247,7 +247,7 @@ Visualization Manager:
         Depth: 10
         Durability Policy: Volatile
         History Policy: Keep Last
-        Reliability Policy: Reliable
+        Reliability Policy: Best Effort
         Value: /cloud_effected
       Use Fixed Frame: true
       Use rainbow: true
@@ -280,7 +280,7 @@ Visualization Manager:
         Depth: 5
         Durability Policy: Volatile
         History Policy: Keep Last
-        Reliability Policy: Reliable
+        Reliability Policy: Best Effort
         Value: ""
       Use Fixed Frame: true
       Use rainbow: true
